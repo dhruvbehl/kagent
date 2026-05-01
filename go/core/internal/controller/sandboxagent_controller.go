@@ -75,6 +75,7 @@ func (r *SandboxAgentController) SetupWithManager(mgr ctrl.Manager) error {
 	build, err = addCommonAgentWatches(build, mgr, agentWatchFinders{
 		modelConfig:     r.sandboxAgentDependencyFinder("failed to list sandboxagents for ModelConfig watch", usesModelConfig),
 		remoteMCPServer: r.sandboxAgentDependencyFinder("failed to list sandboxagents for RemoteMCPServer watch", usesRemoteMCPServer),
+		remoteAgent:     r.sandboxAgentDependencyFinder("failed to list sandboxagents for RemoteAgent watch", usesRemoteAgent),
 		mcpService:      r.sandboxAgentDependencyFinder("failed to list sandboxagents for Service watch", usesMCPService),
 		configMap:       r.sandboxAgentDependencyFinder("failed to list sandboxagents for ConfigMap watch", referencesConfigMap),
 		mcpServer:       r.sandboxAgentDependencyFinder("failed to list sandboxagents for MCPServer watch", usesMCPServer),

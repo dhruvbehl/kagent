@@ -66,6 +66,17 @@ func usesRemoteMCPServer(agent v1alpha2.AgentObject, obj types.NamespacedName) b
 	})
 }
 
+func usesRemoteAgent(agent v1alpha2.AgentObject, obj types.NamespacedName) bool {
+	spec := agent.GetAgentSpec()
+	if spec.Type != v1alpha2.AgentType_Declarative || spec.Declarative == nil {
+		return false
+	}
+
+	return slices.ContainsFunc(spec.Declarative.Tools, func(tool *v1alpha2.Tool) bool {
+		return tool != nil && tool.RemoteAgent != nil && tool.RemoteAgent.NamespacedName(agent.GetNamespace()) == obj
+	})
+}
+
 func usesMCPService(agent v1alpha2.AgentObject, obj types.NamespacedName) bool {
 	spec := agent.GetAgentSpec()
 	if spec.Type != v1alpha2.AgentType_Declarative || spec.Declarative == nil {

@@ -367,6 +367,7 @@ type RemoteAgentConfig struct {
 	Url         string            `json:"url"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	Description string            `json:"description,omitempty"`
+	Timeout     *float64          `json:"timeout,omitempty"`
 }
 
 // EmbeddingConfig is the embedding model config for memory tools.

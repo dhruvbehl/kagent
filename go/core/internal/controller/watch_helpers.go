@@ -23,6 +23,7 @@ type dependentRefFinder func(context.Context, client.Client, types.NamespacedNam
 type agentWatchFinders struct {
 	modelConfig     dependentRefFinder
 	remoteMCPServer dependentRefFinder
+	remoteAgent     dependentRefFinder
 	mcpService      dependentRefFinder
 	configMap       dependentRefFinder
 	mcpServer       dependentRefFinder
@@ -63,6 +64,15 @@ func addCommonAgentWatches(build *builder.Builder, mgr ctrl.Manager, finders age
 				Namespace: obj.GetNamespace(),
 			}))
 		}),
+	).Watches(
+		&v1alpha2.RemoteAgent{},
+		handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+			return reconcileRequestsForRefs(finders.remoteAgent(ctx, mgr.GetClient(), types.NamespacedName{
+				Name:      obj.GetName(),
+				Namespace: obj.GetNamespace(),
+			}))
+		}),
+		builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 	).Watches(
 		&corev1.Service{},
 		handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {

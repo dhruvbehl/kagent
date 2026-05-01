@@ -1,0 +1,120 @@
+# RemoteAgent examples
+#
+# A RemoteAgent represents an external A2A (Agent-to-Agent) endpoint that an
+# in-cluster Agent can use as a sub-agent tool. This is the counterpart to
+# RemoteMCPServer for A2A peers — for example, a kagent Agent running in a
+# different cluster, or any A2A-compliant agent reachable over HTTP(S).
+#
+# How it relates to other tool types on Agent.spec.declarative.tools:
+#
+#   type: McpServer    -> tool calls a tool on an MCP server
+#   type: Agent        -> tool calls another in-cluster kagent Agent (same cluster)
+#   type: RemoteAgent  -> tool calls an A2A endpoint described by a RemoteAgent CR
+#
+# Use RemoteAgent when the peer agent lives outside this cluster (different
+# cluster, different team, third-party A2A service) or when you want to manage
+# the URL, auth headers, and timeout independent of the consuming Agent.
+
+---
+# Example 1: Minimal RemoteAgent + consuming Agent
+#
+# The simplest case: point at a peer agent over HTTPS with no auth.
+
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteAgent
+metadata:
+  name: peer-cluster-a
+  namespace: kagent
+spec:
+  description: Peer agent running in cluster A, exposed via agentgateway A2A frontend
+  url: https://gw-cluster-a.example.com/peer
+
+---
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: federated-orchestrator
+  namespace: kagent
+spec:
+  type: Declarative
+  description: Orchestrator that delegates work to peer agents in other clusters.
+  declarative:
+    modelConfig: default-model-config
+    systemMessage: |
+      You are an orchestrator. When the user asks about cluster A, delegate
+      to the peer-cluster-a sub-agent.
+    tools:
+      - type: RemoteAgent
+        remoteAgent:
+          name: peer-cluster-a
+
+---
+# Example 2: RemoteAgent with auth headers
+#
+# Headers are sourced from Secrets/ConfigMaps in the same namespace as the
+# RemoteAgent. They are sent on every A2A request to the remote endpoint.
+# Tool-level HeadersFrom on the consuming Agent override RemoteAgent-level
+# headers on a per-key basis.
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster-b-token
+  namespace: kagent
+type: Opaque
+stringData:
+  authorization: "Bearer replace-with-real-token"
+
+---
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteAgent
+metadata:
+  name: peer-cluster-b
+  namespace: kagent
+spec:
+  description: Peer agent in cluster B, requires bearer auth
+  url: https://gw-cluster-b.example.com/peer
+  headersFrom:
+    - name: Authorization
+      valueFrom:
+        type: Secret
+        name: cluster-b-token
+        key: authorization
+  timeout: 30s
+
+---
+# Example 3: Cross-namespace RemoteAgent
+#
+# A RemoteAgent in one namespace can be referenced from Agents in other
+# namespaces by setting AllowedNamespaces. This follows the Gateway API
+# cross-namespace pattern.
+
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteAgent
+metadata:
+  name: shared-peer
+  namespace: platform-agents
+spec:
+  description: Shared peer agent available to multiple tenant namespaces
+  url: https://shared-gw.example.com/peer
+  allowedNamespaces:
+    from: All  # Or "Selector" / "Same" — see RemoteAgent CRD docs
+
+---
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: tenant-orchestrator
+  namespace: tenant-a
+spec:
+  type: Declarative
+  description: Tenant orchestrator that delegates to a shared platform peer.
+  declarative:
+    modelConfig: default-model-config
+    systemMessage: |
+      Delegate platform-level questions to the shared-peer sub-agent.
+    tools:
+      - type: RemoteAgent
+        remoteAgent:
+          name: shared-peer
+          namespace: platform-agents

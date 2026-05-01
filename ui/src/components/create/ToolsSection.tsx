@@ -2,14 +2,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Plus, FunctionSquare, X } from "lucide-react";
+import { Plus, FunctionSquare, Network, X } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useState, useEffect } from "react";
-import { isAgentTool, isMcpTool, getToolDescription, getToolIdentifier, getToolDisplayName, serverNamesMatch } from "@/lib/toolUtils";
+import { isAgentTool, isMcpTool, isRemoteAgentTool, getToolDescription, getToolIdentifier, getToolDisplayName, serverNamesMatch } from "@/lib/toolUtils";
 import { SelectToolsDialog } from "./SelectToolsDialog";
-import type { Tool, AgentResponse, ToolsResponse } from "@/types";
+import type { Tool, AgentResponse, RemoteAgent, ToolsResponse } from "@/types";
 import { getAgents } from "@/app/actions/agents";
 import { getTools } from "@/app/actions/tools";
+import { getRemoteAgents } from "@/app/actions/remoteagents";
 import KagentLogo from "../kagent-logo";
 
 interface ToolsSectionProps {
@@ -24,17 +25,19 @@ interface ToolsSectionProps {
 export const ToolsSection = ({ selectedTools, setSelectedTools, isSubmitting, onBlur, currentAgentName, currentAgentNamespace }: ToolsSectionProps) => {
   const [showToolSelector, setShowToolSelector] = useState(false);
   const [availableAgents, setAvailableAgents] = useState<AgentResponse[]>([]);
+  const [availableRemoteAgents, setAvailableRemoteAgents] = useState<RemoteAgent[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [availableTools, setAvailableTools] = useState<ToolsResponse[]>([]);
 
   useEffect(() => {
     const fetchData = async () => {
       setLoadingAgents(true);
-      
+
       try {
-        const [agentsResponse, toolsResponse] = await Promise.all([
+        const [agentsResponse, toolsResponse, remoteAgentsResponse] = await Promise.all([
           getAgents(),
-          getTools()
+          getTools(),
+          getRemoteAgents(),
         ]);
 
         // Handle agents
@@ -47,6 +50,9 @@ export const ToolsSection = ({ selectedTools, setSelectedTools, isSubmitting, on
           console.error("Failed to fetch agents:", agentsResponse.error);
         }
         setAvailableTools(toolsResponse);
+        if (!remoteAgentsResponse.error && remoteAgentsResponse.data) {
+          setAvailableRemoteAgents(remoteAgentsResponse.data);
+        }
       } catch (error) {
         console.error("Failed to fetch data:", error);
       } finally {
@@ -223,6 +229,9 @@ export const ToolsSection = ({ selectedTools, setSelectedTools, isSubmitting, on
           if (isAgentTool(agentTool)) {
             CurrentIcon = KagentLogo;
             currentIconColor = "text-green-500";
+          } else if (isRemoteAgentTool(agentTool)) {
+            CurrentIcon = Network;
+            currentIconColor = "text-purple-500";
           } else {
             CurrentIcon = FunctionSquare;
             currentIconColor = "text-yellow-500";
@@ -304,6 +313,7 @@ export const ToolsSection = ({ selectedTools, setSelectedTools, isSubmitting, on
         onOpenChange={setShowToolSelector}
         availableTools={availableTools}
         availableAgents={availableAgents}
+        availableRemoteAgents={availableRemoteAgents}
         selectedTools={selectedTools}
         onToolsSelected={handleToolSelect}
         loadingAgents={loadingAgents}

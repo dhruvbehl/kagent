@@ -29,6 +29,7 @@ type Handlers struct {
 	Checkpoints         *CheckpointsHandler
 	CrewAI              *CrewAIHandler
 	CurrentUser         *CurrentUserHandler
+	RemoteAgents        *RemoteAgentsHandler
 }
 
 // Base holds common dependencies for all handlers
@@ -72,5 +73,6 @@ func NewHandlers(kubeClient client.Client, defaultModelConfig types.NamespacedNa
 		Checkpoints:         NewCheckpointsHandler(base),
 		CrewAI:              NewCrewAIHandler(base),
 		CurrentUser:         NewCurrentUserHandler(),
+		RemoteAgents:        NewRemoteAgentsHandler(base),
 	}
 }

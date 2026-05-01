@@ -47,6 +47,7 @@ const (
 	APIPathFeedback             = "/api/feedback"
 	APIPathLangGraph            = "/api/langgraph"
 	APIPathCrewAI               = "/api/crewai"
+	APIPathRemoteAgents         = "/api/remoteagents"
 )
 
 var defaultModelConfig = types.NamespacedName{
@@ -295,6 +296,11 @@ func (s *HTTPServer) setupRoutes() {
 	s.router.HandleFunc(APIPathCrewAI+"/memory", adaptHandler(s.handlers.CrewAI.HandleResetMemory)).Methods(http.MethodDelete)
 	s.router.HandleFunc(APIPathCrewAI+"/flows/state", adaptHandler(s.handlers.CrewAI.HandleStoreFlowState)).Methods(http.MethodPost)
 	s.router.HandleFunc(APIPathCrewAI+"/flows/state", adaptHandler(s.handlers.CrewAI.HandleGetFlowState)).Methods(http.MethodGet)
+
+	// Remote Agents
+	s.router.HandleFunc(APIPathRemoteAgents, adaptHandler(s.handlers.RemoteAgents.HandleListRemoteAgents)).Methods(http.MethodGet)
+	s.router.HandleFunc(APIPathRemoteAgents, adaptHandler(s.handlers.RemoteAgents.HandleCreateRemoteAgent)).Methods(http.MethodPost)
+	s.router.HandleFunc(APIPathRemoteAgents+"/{namespace}/{name}", adaptHandler(s.handlers.RemoteAgents.HandleDeleteRemoteAgent)).Methods(http.MethodDelete)
 
 	// A2A
 	s.router.PathPrefix(APIPathA2A + "/{namespace}/{name}").Handler(s.config.A2AHandler)

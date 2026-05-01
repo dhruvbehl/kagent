@@ -10760,6 +10760,9 @@ spec:
                     items:
                       properties:
                         agent:
+                          description: |-
+                            Agent references another in-cluster kagent Agent by name (and optionally
+                            namespace) to use as a sub-agent tool.
                           properties:
                             apiGroup:
                               type: string
@@ -10867,14 +10870,33 @@ spec:
                               ToolNames
                             rule: '!has(self.requireApproval) || self.requireApproval.all(x,
                               has(self.toolNames) && x in self.toolNames)'
+                        remoteAgent:
+                          description: |-
+                            RemoteAgent references a RemoteAgent resource describing an external
+                            A2A endpoint (e.g., a kagent Agent in a different cluster) to use as a
+                            sub-agent tool.
+                          properties:
+                            apiGroup:
+                              type: string
+                            kind:
+                              type: string
+                            name:
+                              type: string
+                            namespace:
+                              type: string
+                          required:
+                          - name
+                          type: object
                         type:
                           allOf:
                           - enum:
                             - McpServer
                             - Agent
+                            - RemoteAgent
                           - enum:
                             - McpServer
                             - Agent
+                            - RemoteAgent
                           description: ToolProviderType represents the tool provider
                             type
                           type: string
@@ -10888,6 +10910,11 @@ spec:
                         rule: '!(has(self.agent) && self.type != ''Agent'')'
                       - message: type.agent must be specified for Agent filter.type
                         rule: '!(!has(self.agent) && self.type == ''Agent'')'
+                      - message: type.remoteAgent must be nil if the type is not RemoteAgent
+                        rule: '!(has(self.remoteAgent) && self.type != ''RemoteAgent'')'
+                      - message: type.remoteAgent must be specified for RemoteAgent
+                          filter.type
+                        rule: '!(!has(self.remoteAgent) && self.type == ''RemoteAgent'')'
                     maxItems: 20
                     type: array
                 type: object

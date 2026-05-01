@@ -43,6 +43,10 @@ func (f *fakeReconciler) ReconcileKagentRemoteMCPServer(ctx context.Context, req
 	return nil
 }
 
+func (f *fakeReconciler) ReconcileKagentRemoteAgent(ctx context.Context, req ctrl.Request) error {
+	return nil
+}
+
 func (f *fakeReconciler) ReconcileKagentModelProviderConfig(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	return ctrl.Result{}, nil
 }

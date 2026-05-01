@@ -99,6 +99,7 @@ function DialogHarness({
         selectedTools={selected}
         onToolsSelected={setSelected}
         availableAgents={availableAgentsOverride ?? availableAgents}
+        availableRemoteAgents={[]}
         loadingAgents={false}
         currentAgentNamespace="kagent"
       />

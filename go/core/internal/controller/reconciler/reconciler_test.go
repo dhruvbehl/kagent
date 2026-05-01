@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/kagent-dev/kagent/go/api/v1alpha2"
 	"github.com/kagent-dev/kagent/go/core/internal/utils"
 	"github.com/stretchr/testify/assert"
@@ -13,10 +14,19 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
+
+func init() {
+	// controller-runtime's delegating root logger panics if no logger is
+	// installed within 30s of first use. Reconciler tests can run longer
+	// than that when executed alongside the rest of the package, so install
+	// a discarding logger up front.
+	ctrl.SetLogger(logr.Discard())
+}
 
 // TestComputeStatusSecretHash_Output verifies the output of the hash function
 func TestComputeStatusSecretHash_Output(t *testing.T) {
@@ -661,6 +671,242 @@ func TestValidateCrossNamespaceReferences(t *testing.T) {
 
 			err := reconciler.validateCrossNamespaceReferences(context.Background(), tt.agent)
 
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateRemoteAgentSpec(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{name: "valid https URL", url: "https://gw.example.com/peer", wantErr: false},
+		{name: "valid http URL", url: "http://gw.example.com:8080", wantErr: false},
+		{name: "trailing whitespace tolerated", url: "  https://gw.example.com/peer  ", wantErr: false},
+		{name: "empty rejected", url: "", wantErr: true},
+		{name: "whitespace only rejected", url: "   ", wantErr: true},
+		{name: "missing scheme rejected", url: "gw.example.com/peer", wantErr: true},
+		{name: "ws scheme rejected", url: "ws://gw.example.com/peer", wantErr: true},
+		{name: "missing host rejected", url: "https://", wantErr: true},
+		{name: "garbage rejected", url: "://oops", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ra := &v1alpha2.RemoteAgent{Spec: v1alpha2.RemoteAgentSpec{URL: tt.url}}
+			err := validateRemoteAgentSpec(ra)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestReconcileKagentRemoteAgent(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, v1alpha2.AddToScheme(scheme))
+
+	tests := []struct {
+		name             string
+		remoteAgent      *v1alpha2.RemoteAgent
+		notFound         bool
+		wantStatus       metav1.ConditionStatus
+		wantReason       string
+		wantMessageMatch string
+	}{
+		{
+			name: "valid spec sets Accepted=True",
+			remoteAgent: &v1alpha2.RemoteAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "ra-ok", Namespace: "kagent"},
+				Spec:       v1alpha2.RemoteAgentSpec{URL: "https://gw.example.com/peer"},
+			},
+			wantStatus: metav1.ConditionTrue,
+			wantReason: "Reconciled",
+		},
+		{
+			name: "invalid URL sets Accepted=False",
+			remoteAgent: &v1alpha2.RemoteAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "ra-bad", Namespace: "kagent"},
+				Spec:       v1alpha2.RemoteAgentSpec{URL: "not-a-url"},
+			},
+			wantStatus:       metav1.ConditionFalse,
+			wantReason:       "ReconcileFailed",
+			wantMessageMatch: "absolute URL",
+		},
+		{
+			name:        "not found is a no-op",
+			remoteAgent: &v1alpha2.RemoteAgent{ObjectMeta: metav1.ObjectMeta{Name: "ra-missing", Namespace: "kagent"}},
+			notFound:    true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&v1alpha2.RemoteAgent{})
+			if !tt.notFound {
+				builder = builder.WithObjects(tt.remoteAgent)
+			}
+			kubeClient := builder.Build()
+
+			r := &kagentReconciler{kube: kubeClient}
+			err := r.ReconcileKagentRemoteAgent(context.Background(), reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: tt.remoteAgent.Name, Namespace: tt.remoteAgent.Namespace},
+			})
+			require.NoError(t, err)
+
+			if tt.notFound {
+				return
+			}
+
+			got := &v1alpha2.RemoteAgent{}
+			require.NoError(t, kubeClient.Get(context.Background(), types.NamespacedName{Name: tt.remoteAgent.Name, Namespace: tt.remoteAgent.Namespace}, got))
+			require.Len(t, got.Status.Conditions, 1)
+			cond := got.Status.Conditions[0]
+			assert.Equal(t, v1alpha2.AgentConditionTypeAccepted, cond.Type)
+			assert.Equal(t, tt.wantStatus, cond.Status)
+			assert.Equal(t, tt.wantReason, cond.Reason)
+			if tt.wantMessageMatch != "" {
+				assert.Contains(t, cond.Message, tt.wantMessageMatch)
+			}
+		})
+	}
+}
+
+func TestValidateCrossNamespaceReferences_RemoteAgent(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, v1alpha2.AddToScheme(scheme))
+
+	sourceNs := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "source-ns"}}
+	targetNs := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "target-ns"}}
+
+	tests := []struct {
+		name              string
+		watchedNamespaces []string
+		objects           []client.Object
+		agent             *v1alpha2.Agent
+		wantErr           bool
+		errContains       string
+	}{
+		{
+			name:              "Same namespace RemoteAgent - allowed",
+			watchedNamespaces: []string{"source-ns"},
+			objects: []client.Object{
+				&v1alpha2.RemoteAgent{
+					ObjectMeta: metav1.ObjectMeta{Name: "peer", Namespace: "source-ns"},
+					Spec:       v1alpha2.RemoteAgentSpec{URL: "https://gw.example.com/peer"},
+				},
+			},
+			agent: &v1alpha2.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: "consumer", Namespace: "source-ns"},
+				Spec: v1alpha2.AgentSpec{
+					Type: v1alpha2.AgentType_Declarative,
+					Declarative: &v1alpha2.DeclarativeAgentSpec{
+						SystemMessage: "test",
+						Tools: []*v1alpha2.Tool{{
+							Type:        v1alpha2.ToolProviderType_RemoteAgent,
+							RemoteAgent: &v1alpha2.TypedReference{Name: "peer", Namespace: "source-ns"},
+						}},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:              "Cross-namespace RemoteAgent in unwatched namespace - denied",
+			watchedNamespaces: []string{"source-ns"},
+			agent: &v1alpha2.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: "consumer", Namespace: "source-ns"},
+				Spec: v1alpha2.AgentSpec{
+					Type: v1alpha2.AgentType_Declarative,
+					Declarative: &v1alpha2.DeclarativeAgentSpec{
+						SystemMessage: "test",
+						Tools: []*v1alpha2.Tool{{
+							Type:        v1alpha2.ToolProviderType_RemoteAgent,
+							RemoteAgent: &v1alpha2.TypedReference{Name: "peer", Namespace: "unwatched-ns"},
+						}},
+					},
+				},
+			},
+			wantErr:     true,
+			errContains: "namespace \"unwatched-ns\" is not watched",
+		},
+		{
+			name:              "Cross-namespace RemoteAgent without AllowedNamespaces - denied",
+			watchedNamespaces: []string{"source-ns", "target-ns"},
+			objects: []client.Object{
+				&v1alpha2.RemoteAgent{
+					ObjectMeta: metav1.ObjectMeta{Name: "peer", Namespace: "target-ns"},
+					Spec:       v1alpha2.RemoteAgentSpec{URL: "https://gw.example.com/peer"},
+				},
+			},
+			agent: &v1alpha2.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: "consumer", Namespace: "source-ns"},
+				Spec: v1alpha2.AgentSpec{
+					Type: v1alpha2.AgentType_Declarative,
+					Declarative: &v1alpha2.DeclarativeAgentSpec{
+						SystemMessage: "test",
+						Tools: []*v1alpha2.Tool{{
+							Type:        v1alpha2.ToolProviderType_RemoteAgent,
+							RemoteAgent: &v1alpha2.TypedReference{Name: "peer", Namespace: "target-ns"},
+						}},
+					},
+				},
+			},
+			wantErr:     true,
+			errContains: "cross-namespace reference to RemoteAgent target-ns/peer is not allowed",
+		},
+		{
+			name:              "Cross-namespace RemoteAgent with From=All - allowed",
+			watchedNamespaces: []string{"source-ns", "target-ns"},
+			objects: []client.Object{
+				&v1alpha2.RemoteAgent{
+					ObjectMeta: metav1.ObjectMeta{Name: "peer", Namespace: "target-ns"},
+					Spec: v1alpha2.RemoteAgentSpec{
+						URL: "https://gw.example.com/peer",
+						AllowedNamespaces: &v1alpha2.AllowedNamespaces{
+							From: v1alpha2.NamespacesFromAll,
+						},
+					},
+				},
+			},
+			agent: &v1alpha2.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: "consumer", Namespace: "source-ns"},
+				Spec: v1alpha2.AgentSpec{
+					Type: v1alpha2.AgentType_Declarative,
+					Declarative: &v1alpha2.DeclarativeAgentSpec{
+						SystemMessage: "test",
+						Tools: []*v1alpha2.Tool{{
+							Type:        v1alpha2.ToolProviderType_RemoteAgent,
+							RemoteAgent: &v1alpha2.TypedReference{Name: "peer", Namespace: "target-ns"},
+						}},
+					},
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sourceNs, targetNs)
+			for _, obj := range tt.objects {
+				b = b.WithObjects(obj)
+			}
+			kubeClient := b.Build()
+
+			r := &kagentReconciler{kube: kubeClient, watchedNamespaces: tt.watchedNamespaces}
+			err := r.validateCrossNamespaceReferences(context.Background(), tt.agent)
 			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errContains != "" {

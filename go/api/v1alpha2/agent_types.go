@@ -393,25 +393,35 @@ type ServiceAccountConfig struct {
 }
 
 // ToolProviderType represents the tool provider type
-// +kubebuilder:validation:Enum=McpServer;Agent
+// +kubebuilder:validation:Enum=McpServer;Agent;RemoteAgent
 type ToolProviderType string
 
 const (
-	ToolProviderType_McpServer ToolProviderType = "McpServer"
-	ToolProviderType_Agent     ToolProviderType = "Agent"
+	ToolProviderType_McpServer   ToolProviderType = "McpServer"
+	ToolProviderType_Agent       ToolProviderType = "Agent"
+	ToolProviderType_RemoteAgent ToolProviderType = "RemoteAgent"
 )
 
 // +kubebuilder:validation:XValidation:message="type.mcpServer must be nil if the type is not McpServer",rule="!(has(self.mcpServer) && self.type != 'McpServer')"
 // +kubebuilder:validation:XValidation:message="type.mcpServer must be specified for McpServer filter.type",rule="!(!has(self.mcpServer) && self.type == 'McpServer')"
 // +kubebuilder:validation:XValidation:message="type.agent must be nil if the type is not Agent",rule="!(has(self.agent) && self.type != 'Agent')"
 // +kubebuilder:validation:XValidation:message="type.agent must be specified for Agent filter.type",rule="!(!has(self.agent) && self.type == 'Agent')"
+// +kubebuilder:validation:XValidation:message="type.remoteAgent must be nil if the type is not RemoteAgent",rule="!(has(self.remoteAgent) && self.type != 'RemoteAgent')"
+// +kubebuilder:validation:XValidation:message="type.remoteAgent must be specified for RemoteAgent filter.type",rule="!(!has(self.remoteAgent) && self.type == 'RemoteAgent')"
 type Tool struct {
-	// +kubebuilder:validation:Enum=McpServer;Agent
+	// +kubebuilder:validation:Enum=McpServer;Agent;RemoteAgent
 	Type ToolProviderType `json:"type,omitempty"`
 	// +optional
 	McpServer *McpServerTool `json:"mcpServer,omitempty"`
+	// Agent references another in-cluster kagent Agent by name (and optionally
+	// namespace) to use as a sub-agent tool.
 	// +optional
 	Agent *TypedReference `json:"agent,omitempty"`
+	// RemoteAgent references a RemoteAgent resource describing an external
+	// A2A endpoint (e.g., a kagent Agent in a different cluster) to use as a
+	// sub-agent tool.
+	// +optional
+	RemoteAgent *TypedReference `json:"remoteAgent,omitempty"`
 
 	// HeadersFrom specifies a list of configuration values to be added as
 	// headers to requests sent to the Tool from this agent. The value of

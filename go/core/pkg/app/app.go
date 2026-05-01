@@ -572,6 +572,14 @@ func Start(getExtensionConfig GetExtensionConfig, migrationRunner MigrationRunne
 		os.Exit(1)
 	}
 
+	if err = (&controller.RemoteAgentController{
+		Scheme:     mgr.GetScheme(),
+		Reconciler: rcnclr,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "RemoteAgent")
+		os.Exit(1)
+	}
+
 	if err := reconcilerutils.SetupOwnerIndexes(mgr, rcnclr.GetOwnedResourceTypes()); err != nil {
 		setupLog.Error(err, "failed to setup indexes for owned resources")
 		os.Exit(1)

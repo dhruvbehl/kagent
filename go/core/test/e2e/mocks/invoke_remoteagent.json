@@ -1,0 +1,30 @@
+{
+  "openai": [
+    {
+      "name": "hello_request",
+      "match": {
+        "match_type": "contains",
+        "message": {
+          "content": "hello",
+          "role": "user"
+        }
+      },
+      "response": {
+        "id": "chatcmpl-remoteagent-1",
+        "object": "chat.completion",
+        "created": 1677652288,
+        "model": "gpt-4.1-mini",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "content": "Hello! I am a remote-agent-consumer and I am ready to help.",
+              "role": "assistant"
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      }
+    }
+  ]
+}

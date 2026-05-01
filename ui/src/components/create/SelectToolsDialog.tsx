@@ -4,13 +4,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Search, Filter, ChevronDown, ChevronRight, AlertCircle, PlusCircle, XCircle, FunctionSquare, LucideIcon } from "lucide-react";
+import { Search, Filter, ChevronDown, ChevronRight, AlertCircle, PlusCircle, XCircle, FunctionSquare, Network, LucideIcon } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import type { AgentResponse, Tool, ToolsResponse } from "@/types";
+import type { AgentResponse, RemoteAgent, Tool, ToolsResponse } from "@/types";
 import ProviderFilter from "./ProviderFilter";
 import Link from "next/link";
-import { getToolResponseDisplayName, getToolResponseDescription, getToolResponseCategory, getToolResponseIdentifier, getToolIdentifier, isAgentTool, isAgentResponse, isMcpTool, toolResponseToAgentTool, groupMcpToolsByServer, serverNamesMatch } from "@/lib/toolUtils";
+import { getToolResponseDisplayName, getToolResponseDescription, getToolResponseCategory, getToolResponseIdentifier, getToolIdentifier, isAgentTool, isAgentResponse, isMcpTool, isRemoteAgentTool, toolResponseToAgentTool, groupMcpToolsByServer, serverNamesMatch } from "@/lib/toolUtils";
 import { toast } from "sonner";
 import KagentLogo from "../kagent-logo";
 import { k8sRefUtils } from "@/lib/k8sUtils";
@@ -25,14 +25,20 @@ interface SelectToolsDialogProps {
   selectedTools: Tool[];
   onToolsSelected: (tools: Tool[]) => void;
   availableAgents: AgentResponse[];
+  availableRemoteAgents: RemoteAgent[];
   loadingAgents: boolean;
   currentAgentNamespace: string;
 }
 
 
 
-// Helper function to get display info for a tool or agent
-const getItemDisplayInfo = (item: ToolsResponse | AgentResponse): {
+const isRemoteAgentItem = (item: ToolsResponse | AgentResponse | RemoteAgent | undefined | null): item is RemoteAgent => {
+  if (!item) return false;
+  return !!(item as RemoteAgent).spec?.url && !!(item as RemoteAgent).metadata;
+};
+
+// Helper function to get display info for a tool, agent, or remote agent
+const getItemDisplayInfo = (item: ToolsResponse | AgentResponse | RemoteAgent): {
   displayName: string;
   description?: string;
   identifier: string;
@@ -42,7 +48,19 @@ const getItemDisplayInfo = (item: ToolsResponse | AgentResponse): {
   isAgent: boolean;
 } => {
 
-  if (isAgentResponse(item)) {
+  if (isRemoteAgentItem(item)) {
+    const ra = item as RemoteAgent;
+    const displayName = k8sRefUtils.toRef(ra.metadata.namespace || "", ra.metadata.name);
+    return {
+      displayName,
+      description: ra.spec.description || ra.spec.url,
+      identifier: `remoteagent-${displayName}`,
+      providerText: "Remote Agent",
+      Icon: Network,
+      iconColor: "text-purple-500",
+      isAgent: false,
+    };
+  } else if (isAgentResponse(item)) {
     const agentResp = item as AgentResponse;
     const displayName = k8sRefUtils.toRef(agentResp.agent.metadata.namespace || "", agentResp.agent.metadata.name);
     return {
@@ -68,7 +86,7 @@ const getItemDisplayInfo = (item: ToolsResponse | AgentResponse): {
   }
 };
 
-export const SelectToolsDialog: React.FC<SelectToolsDialogProps> = ({ open, onOpenChange, availableTools, selectedTools, onToolsSelected, availableAgents, loadingAgents, currentAgentNamespace }) => {
+export const SelectToolsDialog: React.FC<SelectToolsDialogProps> = ({ open, onOpenChange, availableTools, selectedTools, onToolsSelected, availableAgents, availableRemoteAgents, loadingAgents, currentAgentNamespace }) => {
   const [searchTerm, setSearchTerm] = useState("");
   const [localSelectedTools, setLocalSelectedTools] = useState<Tool[]>([]);
   const [categories, setCategories] = useState<Set<string>>(new Set());
@@ -102,13 +120,18 @@ export const SelectToolsDialog: React.FC<SelectToolsDialogProps> = ({ open, onOp
         categoryCollapseState["Agents"] = true;
       }
 
+      if (availableRemoteAgents.length > 0) {
+        uniqueCategories.add("Remote Agents");
+        categoryCollapseState["Remote Agents"] = true;
+      }
+
       setCategories(uniqueCategories);
       setSelectedCategories(new Set());
       setExpandedCategories(categoryCollapseState);
       setShowFilters(false);
     }
     wasOpenRef.current = open;
-  }, [open, selectedTools, availableTools, availableAgents]);
+  }, [open, selectedTools, availableTools, availableAgents, availableRemoteAgents]);
 
   const actualSelectedCount = useMemo(() => {
     return localSelectedTools.reduce((acc, tool) => {
@@ -149,11 +172,19 @@ export const SelectToolsDialog: React.FC<SelectToolsDialogProps> = ({ open, onOp
       })
     : [];
 
-    return { tools, agents };
-  }, [availableTools, availableAgents, searchTerm, selectedCategories]);
+    const remoteAgentCategorySelected = selectedCategories.size === 0 || selectedCategories.has("Remote Agents");
+    const remoteAgents = remoteAgentCategorySelected ? availableRemoteAgents.filter(ra => {
+        const raRef = k8sRefUtils.toRef(ra.metadata.namespace || "", ra.metadata.name).toLowerCase();
+        const raDesc = (ra.spec.description || ra.spec.url).toLowerCase();
+        return raRef.includes(searchLower) || raDesc.includes(searchLower);
+      })
+    : [];
+
+    return { tools, agents, remoteAgents };
+  }, [availableTools, availableAgents, availableRemoteAgents, searchTerm, selectedCategories]);
 
   const groupedAvailableItems = useMemo(() => {
-    const groups: { [key: string]: Array< ToolsResponse | AgentResponse> } = {};
+    const groups: { [key: string]: Array<ToolsResponse | AgentResponse | RemoteAgent> } = {};
     
     const sortedTools = [...filteredAvailableItems.tools].sort((a, b) => {
       return getToolResponseDisplayName(a.tool).localeCompare(getToolResponseDisplayName(b.tool));
@@ -174,27 +205,46 @@ export const SelectToolsDialog: React.FC<SelectToolsDialogProps> = ({ open, onOp
         return aRef.localeCompare(bRef)
       });
     }
-    
+
+    if (filteredAvailableItems.remoteAgents.length > 0) {
+      groups["Remote Agents"] = filteredAvailableItems.remoteAgents.sort((a, b) => {
+        const aRef = k8sRefUtils.toRef(a.metadata.namespace || "", a.metadata.name);
+        const bRef = k8sRefUtils.toRef(b.metadata.namespace || "", b.metadata.name);
+        return aRef.localeCompare(bRef);
+      });
+    }
+
     return Object.entries(groups).sort(([catA], [catB]) => catA.localeCompare(catB))
            .reduce((acc, [key, value]) => { acc[key] = value; return acc; }, {} as typeof groups);
-           
+
   }, [filteredAvailableItems]);
 
-  const isItemSelected = (item: ToolsResponse | AgentResponse): boolean => {
-    if (isAgentResponse(item)) {
+  const isItemSelected = (item: ToolsResponse | AgentResponse | RemoteAgent): boolean => {
+    if (isRemoteAgentItem(item)) {
+      const ra = item as RemoteAgent;
+      return localSelectedTools.some(tool => {
+        if (!isRemoteAgentTool(tool)) return false;
+        const toolNamespace = tool.remoteAgent?.namespace;
+        const toolName = tool.remoteAgent?.name;
+        if (toolNamespace) {
+          return toolNamespace === (ra.metadata.namespace || "") && toolName === ra.metadata.name;
+        }
+        return toolName === ra.metadata.name;
+      });
+    } else if (isAgentResponse(item)) {
       const agentResp = item as AgentResponse;
 
       // "item" is an agent but called item to here so as not to confuse
       // variables with the agent to which the tool is being added
       const itemNamespace = agentResp.agent.metadata.namespace || "";
       const itemName = agentResp.agent.metadata.name;
-      
+
       return localSelectedTools.some(tool => {
         if (!isAgentTool(tool)) return false;
-        
+
         const toolName = tool.agent?.name;
         const toolNamespace = tool.agent?.namespace;
-        
+
         // Match by name and namespace
         if (toolNamespace) {
           return toolNamespace === itemNamespace && toolName === itemName;
@@ -205,20 +255,20 @@ export const SelectToolsDialog: React.FC<SelectToolsDialogProps> = ({ open, onOp
       });
     } else {
       const toolItem = item as ToolsResponse;
-      
+
       return localSelectedTools.some(tool => {
         if (!isMcpTool(tool)) return false;
         const mcpTool = tool as Tool;
-        
+
         const serverMatch = serverNamesMatch(mcpTool.mcpServer?.name || "", toolItem.server_name);
         const toolIdMatch = mcpTool.mcpServer?.toolNames?.includes(toolItem.id);
-        
+
         return serverMatch && toolIdMatch;
       });
     }
   };
 
-  const handleAddItem = (item: ToolsResponse | AgentResponse) => {
+  const handleAddItem = (item: ToolsResponse | AgentResponse | RemoteAgent) => {
     if (isItemSelected(item)) {
       return;
     }
@@ -229,7 +279,20 @@ export const SelectToolsDialog: React.FC<SelectToolsDialogProps> = ({ open, onOp
 
     let toolToAdd: Tool;
 
-    if (isAgentResponse(item)) {
+    if (isRemoteAgentItem(item)) {
+      const ra = item as RemoteAgent;
+      toolToAdd = {
+        type: "RemoteAgent",
+        remoteAgent: {
+          name: ra.metadata.name,
+          namespace: ra.metadata.namespace || "",
+          kind: "RemoteAgent",
+          apiGroup: "kagent.dev",
+        },
+      };
+      setLocalSelectedTools(prev => [...prev, toolToAdd]);
+      return;
+    } else if (isAgentResponse(item)) {
       const agentResp = item as AgentResponse;
       const agentNamespace = agentResp.agent.metadata.namespace || "";
       const agentName = agentResp.agent.metadata.name;
@@ -361,7 +424,7 @@ export const SelectToolsDialog: React.FC<SelectToolsDialogProps> = ({ open, onOp
           <DialogTitle className="text-xl">Select Tools and Agents</DialogTitle>
           <DialogDescription className="text-sm text-muted-foreground">
             You can use tools and agents to create your agent. The tools are grouped by category. You can select a tool by clicking on it. To add or manage tool servers, use{" "}
-            <Link href="/mcp" className="font-medium text-primary underline-offset-4 hover:underline">
+            <Link href="/mcp" target="_blank" rel="noopener noreferrer" className="font-medium text-primary underline-offset-4 hover:underline">
               MCP and tools
             </Link>
             .
@@ -452,10 +515,22 @@ export const SelectToolsDialog: React.FC<SelectToolsDialogProps> = ({ open, onOp
                                   {isSelected && (
                                     <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive/80" onClick={(e) => {
                                       e.stopPropagation();
-                                      if ('agent' in item) {
+                                      if (isRemoteAgentItem(item)) {
+                                        const ra = item as RemoteAgent;
+                                        const toolToRemove = localSelectedTools.find(tool => {
+                                          if (!isRemoteAgentTool(tool)) return false;
+                                          const toolNamespace = tool.remoteAgent?.namespace;
+                                          const toolName = tool.remoteAgent?.name;
+                                          if (toolNamespace) {
+                                            return toolNamespace === (ra.metadata.namespace || "") && toolName === ra.metadata.name;
+                                          }
+                                          return toolName === ra.metadata.name;
+                                        });
+                                        if (toolToRemove) handleRemoveTool(toolToRemove);
+                                      } else if ('agent' in item) {
                                         const agentResp = item as AgentResponse;
                                         const agentRef = k8sRefUtils.toRef(agentResp.agent.metadata.namespace || "", agentResp.agent.metadata.name);
-                                        const toolToRemove = localSelectedTools.find(tool => 
+                                        const toolToRemove = localSelectedTools.find(tool =>
                                           isAgentTool(tool) && (tool.agent?.name === agentRef || tool.agent?.name === agentResp.agent.metadata.name)
                                         );
                                         if (toolToRemove) handleRemoveTool(toolToRemove);
@@ -620,10 +695,10 @@ export const SelectToolsDialog: React.FC<SelectToolsDialogProps> = ({ open, onOp
                         ? availableAgents.find(a => {
                             const agentName = tool.agent?.name;
                             const agentNamespace = tool.agent?.namespace;
-                            
+
                             // Match by name and namespace (if namespace is specified)
                             if (agentNamespace) {
-                              return a.agent.metadata.namespace === agentNamespace && 
+                              return a.agent.metadata.namespace === agentNamespace &&
                                      a.agent.metadata.name === agentName;
                             }
                             // If no namespace specified, match by name only
@@ -631,13 +706,40 @@ export const SelectToolsDialog: React.FC<SelectToolsDialogProps> = ({ open, onOp
                           })
                         : undefined;
 
-                      const matchedTool = !isAgentTool(tool)
+                      const matchedRemoteAgent = isRemoteAgentTool(tool)
+                        ? availableRemoteAgents.find(ra => ra.metadata.name === tool.remoteAgent?.name)
+                        : undefined;
+
+                      const matchedTool = !isAgentTool(tool) && !isRemoteAgentTool(tool)
                         ? availableTools.find(s => serverNamesMatch(s.server_name, tool.mcpServer?.name || ""))
                         : undefined;
 
-                      const { displayName, description, Icon, iconColor } = getItemDisplayInfo(
-                        (matchedAgent as AgentResponse) || (matchedTool as ToolsResponse)
-                      );
+                      // Derive display info from matched item, falling back to tool data when still loading
+                      let displayName: string;
+                      let description: string | undefined;
+                      let Icon: React.ElementType | LucideIcon;
+                      let iconColor: string;
+
+                      if (isRemoteAgentTool(tool)) {
+                        displayName = matchedRemoteAgent
+                          ? k8sRefUtils.toRef(matchedRemoteAgent.metadata.namespace || "", matchedRemoteAgent.metadata.name)
+                          : k8sRefUtils.toRef(tool.remoteAgent?.namespace || currentAgentNamespace, tool.remoteAgent?.name || "");
+                        description = matchedRemoteAgent?.spec.description || matchedRemoteAgent?.spec.url;
+                        Icon = Network;
+                        iconColor = "text-purple-500";
+                      } else if (isAgentTool(tool)) {
+                        displayName = matchedAgent
+                          ? k8sRefUtils.toRef(matchedAgent.agent.metadata.namespace || "", matchedAgent.agent.metadata.name)
+                          : k8sRefUtils.toRef(tool.agent?.namespace || currentAgentNamespace, tool.agent?.name || "");
+                        description = matchedAgent?.agent.spec.description;
+                        Icon = KagentLogo;
+                        iconColor = "text-green-500";
+                      } else {
+                        displayName = matchedTool ? getItemDisplayInfo(matchedTool).displayName : tool.mcpServer?.name || "Unknown";
+                        description = matchedTool?.description;
+                        Icon = FunctionSquare;
+                        iconColor = "text-blue-400";
+                      }
                       
                       return [( 
                         <div key={displayName} className="flex w-full min-w-0 max-w-full items-start gap-2 rounded-md border bg-muted/30 px-2.5 py-2">
