@@ -25,10 +25,21 @@ export async function createRemoteAgent(remoteAgent: RemoteAgent): Promise<BaseR
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(remoteAgent),
     });
-    revalidatePath("/agents");
+    revalidatePath("/remoteagents");
+    revalidatePath("/remoteagents/new");
     return response;
   } catch (error) {
     return createErrorResponse<RemoteAgent>(error, "Error creating RemoteAgent");
+  }
+}
+
+export async function getRemoteAgent(namespace: string, name: string): Promise<BaseResponse<RemoteAgent>> {
+  try {
+    const response = await fetchApi<BaseResponse<RemoteAgent>>(`/remoteagents/${namespace}/${name}`);
+    if (!response) throw new Error("Failed to get RemoteAgent");
+    return response;
+  } catch (error) {
+    return createErrorResponse<RemoteAgent>(error, "Error getting RemoteAgent");
   }
 }
 
@@ -37,7 +48,7 @@ export async function deleteRemoteAgent(namespace: string, name: string): Promis
     await fetchApi<BaseResponse<void>>(`/remoteagents/${namespace}/${name}`, {
       method: "DELETE",
     });
-    revalidatePath("/agents");
+    revalidatePath("/remoteagents");
     return { message: "RemoteAgent deleted successfully" };
   } catch (error) {
     return createErrorResponse<void>(error, "Error deleting RemoteAgent");

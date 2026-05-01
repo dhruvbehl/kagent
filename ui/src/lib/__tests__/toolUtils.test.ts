@@ -1,7 +1,8 @@
 import { describe, expect, it, jest, beforeEach, afterEach } from '@jest/globals';
-import { 
-  isMcpTool, 
+import {
+  isMcpTool,
   isAgentTool,
+  isRemoteAgentTool,
   groupMcpToolsByServer,
   getToolIdentifier,
   getToolDisplayName,
@@ -75,6 +76,49 @@ describe('Tool Utility Functions', () => {
       expect(isAgentTool({})).toBe(false);
       expect(isAgentTool({ type: "Agent" })).toBe(undefined);
       expect(isAgentTool({ type: "Agent", agent: {} })).toBe(false);
+    });
+  });
+
+  describe('isRemoteAgentTool', () => {
+    it('should identify valid RemoteAgent tools', () => {
+      const validRemoteAgentTool: Tool = {
+        type: "RemoteAgent",
+        remoteAgent: {
+          name: "data-retrieval-agent",
+          namespace: "kagent",
+        },
+      };
+      expect(isRemoteAgentTool(validRemoteAgentTool)).toBe(true);
+    });
+
+    it('should identify valid RemoteAgent tools without namespace', () => {
+      const validRemoteAgentTool: Tool = {
+        type: "RemoteAgent",
+        remoteAgent: {
+          name: "data-retrieval-agent",
+        },
+      };
+      expect(isRemoteAgentTool(validRemoteAgentTool)).toBe(true);
+    });
+
+    it('should reject invalid RemoteAgent tools', () => {
+      expect(isRemoteAgentTool(null)).toBe(false);
+      expect(isRemoteAgentTool(undefined)).toBe(false);
+      expect(isRemoteAgentTool({})).toBe(false);
+      // remoteAgent missing → short-circuits to undefined (same as isAgentTool behaviour)
+      expect(isRemoteAgentTool({ type: "RemoteAgent" })).toBeFalsy();
+      expect(isRemoteAgentTool({ type: "RemoteAgent", remoteAgent: {} })).toBe(false);
+      expect(isRemoteAgentTool({ type: "RemoteAgent", remoteAgent: { name: 123 } })).toBe(false);
+    });
+
+    it('should not match Agent or McpServer tools', () => {
+      const agentTool: Tool = { type: "Agent", agent: { name: "test" } };
+      const mcpTool: Tool = {
+        type: "McpServer",
+        mcpServer: { name: "srv", apiGroup: "kagent.dev", kind: "MCPServer", toolNames: [] },
+      };
+      expect(isRemoteAgentTool(agentTool)).toBe(false);
+      expect(isRemoteAgentTool(mcpTool)).toBe(false);
     });
   });
 
@@ -290,6 +334,31 @@ describe('Tool Utility Functions', () => {
       expect(result.groupedTools.find(t => t.type === "McpServer")).toBeDefined();
     });
 
+    it('should preserve RemoteAgent tools unchanged alongside MCP tools', () => {
+      const githubServerRef = k8sRefUtils.toRef("default", "github-server");
+      const remoteAgentTool: Tool = {
+        type: "RemoteAgent",
+        remoteAgent: { name: "data-retrieval-agent", namespace: "kagent" },
+      };
+      const mcpTool: Tool = {
+        type: "McpServer",
+        mcpServer: {
+          name: githubServerRef,
+          apiGroup: "kagent.dev",
+          kind: "MCPServer",
+          toolNames: ["create_pull_request"],
+        },
+      };
+      const tools: Tool[] = [remoteAgentTool, mcpTool];
+
+      const result = groupMcpToolsByServer(tools);
+
+      expect(result.errors).toEqual([]);
+      expect(result.groupedTools).toHaveLength(2);
+      expect(result.groupedTools.find((t) => t.type === "RemoteAgent")).toEqual(remoteAgentTool);
+      expect(result.groupedTools.find((t) => t.type === "McpServer")).toBeDefined();
+    });
+
     it('should handle empty tool names arrays', () => {
       const githubServerRef = k8sRefUtils.toRef("default", "github-server");
       const tools: Tool[] = [
@@ -448,6 +517,14 @@ describe('Tool Utility Functions', () => {
       expect(getToolIdentifier(agentTool)).toBe("agent-test-agent");
     });
 
+    it('should return correct identifier for RemoteAgent tools', () => {
+      const remoteAgentTool: Tool = {
+        type: "RemoteAgent",
+        remoteAgent: { name: "data-retrieval-agent" },
+      };
+      expect(getToolIdentifier(remoteAgentTool)).toBe("remoteagent-data-retrieval-agent");
+    });
+
     it('should return correct identifier for MCP tools', () => {
       const mcpTool: Tool = {
         type: "McpServer",
@@ -513,6 +590,30 @@ describe('Tool Utility Functions', () => {
       expect(getToolDisplayName(agentTool, "default")).toBe("default/test-agent");
     });
 
+    it('should return namespaced ref for RemoteAgent tools with explicit namespace', () => {
+      const remoteAgentTool: Tool = {
+        type: "RemoteAgent",
+        remoteAgent: { name: "data-retrieval-agent", namespace: "kagent" },
+      };
+      expect(getToolDisplayName(remoteAgentTool, "default")).toBe("kagent/data-retrieval-agent");
+    });
+
+    it('should return namespaced ref for RemoteAgent tools using default namespace', () => {
+      const remoteAgentTool: Tool = {
+        type: "RemoteAgent",
+        remoteAgent: { name: "data-retrieval-agent" },
+      };
+      expect(getToolDisplayName(remoteAgentTool, "default")).toBe("default/data-retrieval-agent");
+    });
+
+    it('should return "Unknown Remote Agent" for RemoteAgent tools with missing name', () => {
+      const remoteAgentTool: Tool = {
+        type: "RemoteAgent",
+        remoteAgent: { name: "" },
+      };
+      expect(getToolDisplayName(remoteAgentTool, "default")).toBe("Unknown Remote Agent");
+    });
+
     it('should return namespaced ref for MCP tools with explicit namespace', () => {
       const mcpTool: Tool = {
         type: "McpServer",
@@ -568,6 +669,14 @@ describe('Tool Utility Functions', () => {
         }
       };
       expect(getToolDescription(agentTool, [])).toBe("Agent");
+    });
+
+    it('should return "Remote Agent" for RemoteAgent tools', () => {
+      const remoteAgentTool: Tool = {
+        type: "RemoteAgent",
+        remoteAgent: { name: "data-retrieval-agent" },
+      };
+      expect(getToolDescription(remoteAgentTool, [])).toBe("Remote Agent");
     });
 
     it('should return description from availableTools for MCP tools', () => {

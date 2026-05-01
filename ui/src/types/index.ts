@@ -250,6 +250,20 @@ export interface Tool {
 export interface RemoteAgentSpec {
   description?: string;
   url: string;
+  timeout?: string;
+}
+
+export interface RemoteAgentStatus {
+  conditions?: Array<{
+    type: string;
+    status: string;
+    message?: string;
+    reason?: string;
+    lastTransitionTime?: string;
+  }>;
+  agentCard?: string;
+  agentName?: string;
+  agentDescription?: string;
 }
 
 export interface RemoteAgent {
@@ -257,6 +271,7 @@ export interface RemoteAgent {
   kind?: string;
   metadata: ResourceMetadata;
   spec: RemoteAgentSpec;
+  status?: RemoteAgentStatus;
 }
 
 export interface TypedLocalReference {
