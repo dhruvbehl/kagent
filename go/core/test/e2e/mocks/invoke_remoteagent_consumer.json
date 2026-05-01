@@ -1,0 +1,67 @@
+{
+  "openai": [
+    {
+      "name": "consumer_initial_request",
+      "match": {
+        "match_type": "contains",
+        "message": {
+          "content": "hello",
+          "role": "user"
+        }
+      },
+      "response": {
+        "id": "chatcmpl-consumer-1",
+        "object": "chat.completion",
+        "created": 1677652288,
+        "model": "gpt-4.1-mini",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "content": "",
+              "role": "assistant",
+              "tool_calls": [
+                {
+                  "id": "call_remote_1",
+                  "type": "function",
+                  "function": {
+                    "name": "kagent__NS__test_remote_agent",
+                    "arguments": "{\"request\": \"hello\"}"
+                  }
+                }
+              ]
+            },
+            "finish_reason": "tool_calls"
+          }
+        ]
+      }
+    },
+    {
+      "name": "consumer_tool_result",
+      "match": {
+        "match_type": "contains",
+        "message": {
+          "content": "from-target-agent",
+          "role": "tool",
+          "tool_call_id": "call_remote_1"
+        }
+      },
+      "response": {
+        "id": "chatcmpl-consumer-2",
+        "object": "chat.completion",
+        "created": 1677652288,
+        "model": "gpt-4.1-mini",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "content": "delegated-response-confirmed",
+              "role": "assistant"
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      }
+    }
+  ]
+}

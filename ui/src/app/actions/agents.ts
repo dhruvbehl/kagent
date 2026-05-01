@@ -375,6 +375,35 @@ function fromAgentFormDataToSandboxAgent(agentFormData: AgentFormData): SandboxA
         } as Tool;
       }
 
+      if (tool.type === "RemoteAgent") {
+        const remoteAgent = tool.remoteAgent;
+        if (!remoteAgent) {
+          throw new Error("RemoteAgent reference not found");
+        }
+
+        let name = remoteAgent.name;
+        let namespace: string | undefined = remoteAgent.namespace;
+
+        if (k8sRefUtils.isValidRef(name)) {
+          const parsed = k8sRefUtils.fromRef(name);
+          name = parsed.name;
+        }
+
+        if (!namespace) {
+          namespace = agentNamespace;
+        }
+
+        return {
+          type: "RemoteAgent",
+          remoteAgent: {
+            name,
+            namespace,
+            kind: remoteAgent.kind || "RemoteAgent",
+            apiGroup: remoteAgent.apiGroup || "kagent.dev",
+          },
+        } as Tool;
+      }
+
       console.warn("Unknown tool type:", tool);
       return tool as Tool;
     });

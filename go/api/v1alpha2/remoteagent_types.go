@@ -68,6 +68,18 @@ type RemoteAgentSpec struct {
 type RemoteAgentStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration"`
 	Conditions         []metav1.Condition `json:"conditions"`
+
+	// AgentCard contains the fetched agent card JSON from the remote endpoint.
+	// +optional
+	AgentCard string `json:"agentCard,omitempty"`
+
+	// AgentName is the name extracted from the agent card.
+	// +optional
+	AgentName string `json:"agentName,omitempty"`
+
+	// AgentDescription is the description extracted from the agent card.
+	// +optional
+	AgentDescription string `json:"agentDescription,omitempty"`
 }
 
 // +kubebuilder:object:root=true

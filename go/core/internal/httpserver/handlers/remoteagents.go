@@ -77,6 +77,84 @@ func (h *RemoteAgentsHandler) HandleCreateRemoteAgent(w ErrorResponseWriter, r *
 	RespondWithJSON(w, http.StatusCreated, data)
 }
 
+// HandleUpdateRemoteAgent handles PUT /api/remoteagents/{namespace}/{name}.
+func (h *RemoteAgentsHandler) HandleUpdateRemoteAgent(w ErrorResponseWriter, r *http.Request) {
+	log := ctrllog.FromContext(r.Context()).WithName("remoteagents-handler").WithValues("operation", "update")
+
+	if err := Check(h.Authorizer, r, auth.Resource{Type: "RemoteAgent"}); err != nil {
+		w.RespondWithError(err)
+		return
+	}
+
+	var remoteAgent v1alpha2.RemoteAgent
+	if err := json.NewDecoder(r.Body).Decode(&remoteAgent); err != nil {
+		w.RespondWithError(errors.NewBadRequestError("Invalid RemoteAgent body", err))
+		return
+	}
+
+	name, err := GetPathParam(r, "name")
+	if err != nil {
+		w.RespondWithError(errors.NewBadRequestError("RemoteAgent name is required", err))
+		return
+	}
+
+	namespace, err := GetPathParam(r, "namespace")
+	if err != nil {
+		namespace = h.DefaultModelConfig.Namespace
+	}
+
+	remoteAgent.Name = name
+	remoteAgent.Namespace = namespace
+
+	if err := h.KubeClient.Update(r.Context(), &remoteAgent); err != nil {
+		if apierrors.IsNotFound(err) {
+			w.RespondWithError(errors.NewNotFoundError("RemoteAgent not found", err))
+			return
+		}
+		w.RespondWithError(errors.NewInternalServerError("Failed to update RemoteAgent", err))
+		return
+	}
+
+	log.Info("Updated RemoteAgent", "name", name, "namespace", namespace)
+	data := api.NewResponse(remoteAgent, "Successfully updated RemoteAgent", false)
+	RespondWithJSON(w, http.StatusOK, data)
+}
+
+// HandleGetRemoteAgent handles GET /api/remoteagents/{namespace}/{name}.
+func (h *RemoteAgentsHandler) HandleGetRemoteAgent(w ErrorResponseWriter, r *http.Request) {
+	log := ctrllog.FromContext(r.Context()).WithName("remoteagents-handler").WithValues("operation", "get")
+
+	if err := Check(h.Authorizer, r, auth.Resource{Type: "RemoteAgent"}); err != nil {
+		w.RespondWithError(err)
+		return
+	}
+
+	name, err := GetPathParam(r, "name")
+	if err != nil {
+		w.RespondWithError(errors.NewBadRequestError("RemoteAgent name is required", err))
+		return
+	}
+
+	namespace, err := GetPathParam(r, "namespace")
+	if err != nil {
+		namespace = h.DefaultModelConfig.Namespace
+	}
+
+	remoteAgent := &v1alpha2.RemoteAgent{}
+	if err := h.KubeClient.Get(r.Context(), client.ObjectKey{Namespace: namespace, Name: name}, remoteAgent); err != nil {
+		if apierrors.IsNotFound(err) {
+			w.RespondWithError(errors.NewNotFoundError("RemoteAgent not found", err))
+			return
+		}
+		w.RespondWithError(errors.NewInternalServerError("Failed to get RemoteAgent", err))
+		return
+	}
+
+	log.Info("Retrieved RemoteAgent", "name", name, "namespace", namespace)
+	data := api.NewResponse(remoteAgent, "Successfully retrieved RemoteAgent", false)
+	RespondWithJSON(w, http.StatusOK, data)
+}
+
 // HandleDeleteRemoteAgent handles DELETE /api/remoteagents/{namespace}/{name}.
 func (h *RemoteAgentsHandler) HandleDeleteRemoteAgent(w ErrorResponseWriter, r *http.Request) {
 	log := ctrllog.FromContext(r.Context()).WithName("remoteagents-handler").WithValues("operation", "delete")
