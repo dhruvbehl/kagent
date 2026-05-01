@@ -10,6 +10,7 @@
   - toolservers
   - memories
   - remotemcpservers
+  - remoteagents
   - mcpservers
   verbs:
   - get
@@ -26,6 +27,7 @@
   - toolservers/finalizers
   - memories/finalizers
   - remotemcpservers/finalizers
+  - remoteagents/finalizers
   - mcpservers/finalizers
   verbs:
   - update
@@ -40,6 +42,7 @@
   - toolservers/status
   - memories/status
   - remotemcpservers/status
+  - remoteagents/status
   - mcpservers/status
   verbs:
   - get

@@ -16,6 +16,14 @@ export const isAgentTool = (value: unknown): value is { type: "Agent"; agent: Ty
   return obj.type === "Agent" && obj.agent && typeof obj.agent === "object" && typeof obj.agent.name === "string";
 };
 
+export const isRemoteAgentTool = (value: unknown): value is { type: "RemoteAgent"; remoteAgent: TypedLocalReference } => {
+  if (!value || typeof value !== "object") return false;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const obj = value as any;
+  return obj.type === "RemoteAgent" && obj.remoteAgent && typeof obj.remoteAgent === "object" && typeof obj.remoteAgent.name === "string";
+};
+
 // Compare server names it handles both "namespace/name" refs and plain names
 export const serverNamesMatch = (serverName1: string, serverName2: string): boolean => {
   if (!serverName1 || !serverName2) return false;
@@ -89,7 +97,7 @@ export const groupMcpToolsByServer = (tools: Tool[]): {
         }
       });
       mcpApprovalsByServer.set(serverNameRef, approvalSet);
-    } else if (isAgentTool(tool)) {
+    } else if (isAgentTool(tool) || isRemoteAgentTool(tool)) {
       nonMcpTools.push(tool);
     } else {
       const toolType = tool?.type || (tool ? 'malformed' : 'null/undefined');
@@ -130,6 +138,8 @@ export const groupMcpToolsByServer = (tools: Tool[]): {
 export const getToolIdentifier = (tool: Tool): string => {
   if (isAgentTool(tool) && tool.agent) {
     return `agent-${tool.agent.name}`;
+  } else if (isRemoteAgentTool(tool) && tool.remoteAgent) {
+    return `remoteagent-${tool.remoteAgent.name}`;
   } else if (isMcpTool(tool)) {
     const mcpTool = tool as Tool;
     return `mcp-${mcpTool.mcpServer?.name || "No name"}`;
@@ -167,6 +177,12 @@ export const getToolDisplayName = (tool: Tool, defaultNamespace: string): string
       return "Unknown Agent";
     }
     return k8sRefUtils.toRef(tool.agent.namespace || defaultNamespace, name);
+  } else if (isRemoteAgentTool(tool) && tool.remoteAgent) {
+    const name = tool.remoteAgent?.name;
+    if (!name || name.trim() === "") {
+      return "Unknown Remote Agent";
+    }
+    return k8sRefUtils.toRef(tool.remoteAgent.namespace || defaultNamespace, name);
   } else if (isMcpTool(tool)) {
     const mcpTool = tool as Tool;
     const name = mcpTool.mcpServer?.name;
@@ -181,6 +197,8 @@ export const getToolDisplayName = (tool: Tool, defaultNamespace: string): string
 export const getToolDescription = (tool: Tool, availableTools: ToolsResponse[]): string => {
   if (isAgentTool(tool) && tool.agent) {
     return "Agent";
+  } else if (isRemoteAgentTool(tool) && tool.remoteAgent) {
+    return "Remote Agent";
   } else if (isMcpTool(tool)) {
     // For MCP tools, look up description from availableTools
     const mcpTool = tool as Tool;

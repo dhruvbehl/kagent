@@ -53,6 +53,7 @@ const (
 	APIPathSandboxSSH           = "/api/sandbox/ssh"
 	APIPathAgentHarnessHarness  = "/api/agentharnesses/{namespace}/{name}/"
 	APIPathSubstrateStatus      = "/api/substrate/status"
+	APIPathRemoteAgents         = "/api/remoteagents"
 )
 
 var defaultModelConfig = types.NamespacedName{
@@ -331,6 +332,11 @@ func (s *HTTPServer) setupRoutes() {
 	s.router.PathPrefix(APIPathAgentHarnessHarness).Handler(
 		adaptHandler(s.handlers.HandleAgentHarnessGateway),
 	)
+
+	// Remote Agents
+	s.router.HandleFunc(APIPathRemoteAgents, adaptHandler(s.handlers.RemoteAgents.HandleListRemoteAgents)).Methods(http.MethodGet)
+	s.router.HandleFunc(APIPathRemoteAgents, adaptHandler(s.handlers.RemoteAgents.HandleCreateRemoteAgent)).Methods(http.MethodPost)
+	s.router.HandleFunc(APIPathRemoteAgents+"/{namespace}/{name}", adaptHandler(s.handlers.RemoteAgents.HandleDeleteRemoteAgent)).Methods(http.MethodDelete)
 
 	// A2A
 	s.router.PathPrefix(APIPathA2A + "/{namespace}/{name}").Handler(s.config.A2AHandler)

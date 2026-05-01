@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 
 	a2a "github.com/a2aproject/a2a-go/v2/a2a"
@@ -132,6 +133,10 @@ func (a *adkApiTranslator) validateAgent(ctx context.Context, agent v1alpha2.Age
 	}
 
 	for _, tool := range spec.Declarative.Tools {
+		if tool.Agent != nil && tool.RemoteAgent != nil {
+			return fmt.Errorf("tool entry cannot reference both Agent and RemoteAgent")
+		}
+
 		switch tool.Type {
 		case v1alpha2.ToolProviderType_Agent:
 			if tool.Agent == nil {
@@ -153,6 +158,10 @@ func (a *adkApiTranslator) validateAgent(ctx context.Context, agent v1alpha2.Age
 			err = a.validateAgent(ctx, toolAgent, state.with(agent))
 			if err != nil {
 				return err
+			}
+		case v1alpha2.ToolProviderType_RemoteAgent:
+			if tool.RemoteAgent == nil {
+				return fmt.Errorf("tool must have a remoteAgent reference when type is RemoteAgent")
 			}
 		}
 	}
@@ -304,6 +313,35 @@ func (a *adkApiTranslator) translateInlineAgent(ctx context.Context, agent v1alp
 			default:
 				return nil, nil, nil, fmt.Errorf("unknown agent type: %s", toolAgent.Spec.Type)
 			}
+
+		case tool.RemoteAgent != nil:
+			remoteAgentRef := tool.RemoteAgent.NamespacedName(agent.GetNamespace())
+
+			remoteAgent := &v1alpha2.RemoteAgent{}
+			if err := a.kube.Get(ctx, remoteAgentRef, remoteAgent); err != nil {
+				return nil, nil, nil, fmt.Errorf("failed to get RemoteAgent %s: %w", remoteAgentRef, err)
+			}
+
+			// Headers configured on the RemoteAgent resource are the base; any
+			// HeadersFrom set on the Tool entry override them on a per-key
+			// basis (matches the documented behaviour of HeadersFrom on Tool).
+			mergedHeaders, err := remoteAgent.ResolveHeaders(ctx, a.kube)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("failed to resolve headers for RemoteAgent %s: %w", remoteAgentRef, err)
+			}
+			maps.Copy(mergedHeaders, headers)
+
+			remoteAgentConfig := adk.RemoteAgentConfig{
+				Name:        utils.ConvertToPythonIdentifier(utils.GetObjectRef(remoteAgent)),
+				Url:         remoteAgent.Spec.URL,
+				Headers:     mergedHeaders,
+				Description: remoteAgent.Spec.Description,
+			}
+			if remoteAgent.Spec.Timeout != nil {
+				seconds := remoteAgent.Spec.Timeout.Seconds()
+				remoteAgentConfig.Timeout = &seconds
+			}
+			cfg.RemoteAgents = append(cfg.RemoteAgents, remoteAgentConfig)
 
 		default:
 			return nil, nil, nil, fmt.Errorf("tool must have a provider or tool server")

@@ -542,6 +542,12 @@ func (m *workspaceModel) renderDetails() {
 					name = t.Agent.Name
 				}
 				fmt.Fprintf(&m.details, "- Agent tool: %s\n", name)
+			case v1alpha2.ToolProviderType_RemoteAgent:
+				name := ""
+				if t.RemoteAgent != nil {
+					name = t.RemoteAgent.Name
+				}
+				fmt.Fprintf(&m.details, "- Remote agent tool: %s\n", name)
 			default:
 				fmt.Fprintf(&m.details, "- Tool: (unknown type)\n")
 			}
