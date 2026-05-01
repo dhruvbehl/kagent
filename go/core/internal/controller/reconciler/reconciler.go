@@ -6,8 +6,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -756,9 +758,9 @@ func (a *kagentReconciler) reconcileRemoteMCPServerStatus(
 
 // ReconcileKagentRemoteAgent reconciles a RemoteAgent resource. RemoteAgent
 // represents an external A2A endpoint that an in-cluster Agent can reference
-// as a sub-agent tool. The reconciler validates the resource and surfaces an
-// Accepted condition; the URL is consumed by the agent translator at the time
-// the referencing Agent is reconciled.
+// as a sub-agent tool. The reconciler validates the resource, fetches the
+// agent card from the well-known endpoint, and surfaces Accepted and Reachable
+// conditions in the status.
 func (a *kagentReconciler) ReconcileKagentRemoteAgent(ctx context.Context, req ctrl.Request) error {
 	nns := req.NamespacedName
 	l := reconcileLog.WithValues("remoteAgent", nns.String())
@@ -776,11 +778,79 @@ func (a *kagentReconciler) ReconcileKagentRemoteAgent(ctx context.Context, req c
 		l.Error(validationErr, "remote agent spec is invalid")
 	}
 
-	if err := a.reconcileRemoteAgentStatus(ctx, remoteAgent, validationErr); err != nil {
+	// Attempt to fetch the agent card regardless of validation outcome — the
+	// URL may still be structurally valid even when other spec constraints fail.
+	var agentCardResult *agentCardFetchResult
+	if validationErr == nil {
+		agentCardResult = fetchAgentCard(ctx, remoteAgent.Spec.URL)
+		if agentCardResult.err != nil {
+			l.Info("agent card fetch failed", "url", agentCardResult.url, "error", agentCardResult.err)
+		} else {
+			l.Info("agent card fetched", "url", agentCardResult.url, "name", agentCardResult.name)
+		}
+	}
+
+	if err := a.reconcileRemoteAgentStatus(ctx, remoteAgent, validationErr, agentCardResult); err != nil {
 		return fmt.Errorf("failed to reconcile remote agent status %s: %w", nns, err)
 	}
 
 	return nil
+}
+
+// agentCardFetchResult holds the outcome of a single agent card HTTP fetch.
+type agentCardFetchResult struct {
+	url         string
+	err         error
+	rawJSON     string
+	name        string
+	description string
+}
+
+// fetchAgentCard GETs /.well-known/agent.json on the same origin as url and
+// returns the parsed result. It never returns a nil pointer.
+func fetchAgentCard(ctx context.Context, rawURL string) *agentCardFetchResult {
+	agentCardURL := strings.TrimRight(rawURL, "/") + "/.well-known/agent.json"
+	result := &agentCardFetchResult{url: agentCardURL}
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, agentCardURL, nil)
+	if err != nil {
+		result.err = fmt.Errorf("failed to build agent card request: %w", err)
+		return result
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		result.err = fmt.Errorf("agent card request failed: %w", err)
+		return result
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		result.err = fmt.Errorf("agent card endpoint returned HTTP %d", resp.StatusCode)
+		return result
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		result.err = fmt.Errorf("failed to read agent card response body: %w", err)
+		return result
+	}
+
+	result.rawJSON = string(body)
+
+	// Best-effort JSON parse — we don't require a specific struct.
+	var card map[string]any
+	if parseErr := json.Unmarshal(body, &card); parseErr == nil {
+		if name, ok := card["name"].(string); ok {
+			result.name = name
+		}
+		if desc, ok := card["description"].(string); ok {
+			result.description = desc
+		}
+	}
+
+	return result
 }
 
 // validateRemoteAgentSpec performs lightweight validation of a RemoteAgent
@@ -811,29 +881,67 @@ func validateRemoteAgentSpec(remoteAgent *v1alpha2.RemoteAgent) error {
 func (a *kagentReconciler) reconcileRemoteAgentStatus(
 	ctx context.Context,
 	remoteAgent *v1alpha2.RemoteAgent,
-	err error,
+	validationErr error,
+	fetchResult *agentCardFetchResult,
 ) error {
 	var (
-		status  metav1.ConditionStatus
-		message string
-		reason  string
+		acceptedStatus  metav1.ConditionStatus
+		acceptedMessage string
+		acceptedReason  string
 	)
-	if err != nil {
-		status = metav1.ConditionFalse
-		message = err.Error()
-		reason = "ReconcileFailed"
+	if validationErr != nil {
+		acceptedStatus = metav1.ConditionFalse
+		acceptedMessage = validationErr.Error()
+		acceptedReason = "ReconcileFailed"
 	} else {
-		status = metav1.ConditionTrue
-		reason = "Reconciled"
-		message = "Remote agent configuration accepted"
+		acceptedStatus = metav1.ConditionTrue
+		acceptedReason = "Reconciled"
+		acceptedMessage = "Remote agent configuration accepted"
 	}
 	conditionChanged := meta.SetStatusCondition(&remoteAgent.Status.Conditions, metav1.Condition{
 		Type:               v1alpha2.AgentConditionTypeAccepted,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
+		Status:             acceptedStatus,
+		Reason:             acceptedReason,
+		Message:            acceptedMessage,
 		ObservedGeneration: remoteAgent.Generation,
 	})
+
+	// Set Reachable condition based on agent card fetch result.
+	if fetchResult != nil {
+		var (
+			reachableStatus  metav1.ConditionStatus
+			reachableReason  string
+			reachableMessage string
+		)
+		if fetchResult.err != nil {
+			reachableStatus = metav1.ConditionFalse
+			reachableReason = "AgentCardFetchFailed"
+			reachableMessage = fetchResult.err.Error()
+		} else {
+			reachableStatus = metav1.ConditionTrue
+			reachableReason = "AgentCardFetched"
+			reachableMessage = fmt.Sprintf("Agent card fetched from %s", fetchResult.url)
+		}
+		conditionChanged = conditionChanged || meta.SetStatusCondition(&remoteAgent.Status.Conditions, metav1.Condition{
+			Type:               "Reachable",
+			Status:             reachableStatus,
+			Reason:             reachableReason,
+			Message:            reachableMessage,
+			ObservedGeneration: remoteAgent.Generation,
+		})
+
+		// Update agent card status fields.
+		if fetchResult.err == nil {
+			if remoteAgent.Status.AgentCard != fetchResult.rawJSON ||
+				remoteAgent.Status.AgentName != fetchResult.name ||
+				remoteAgent.Status.AgentDescription != fetchResult.description {
+				remoteAgent.Status.AgentCard = fetchResult.rawJSON
+				remoteAgent.Status.AgentName = fetchResult.name
+				remoteAgent.Status.AgentDescription = fetchResult.description
+				conditionChanged = true
+			}
+		}
+	}
 
 	if !conditionChanged && remoteAgent.Status.ObservedGeneration == remoteAgent.Generation {
 		return nil

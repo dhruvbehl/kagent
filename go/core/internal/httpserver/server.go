@@ -336,6 +336,8 @@ func (s *HTTPServer) setupRoutes() {
 	// Remote Agents
 	s.router.HandleFunc(APIPathRemoteAgents, adaptHandler(s.handlers.RemoteAgents.HandleListRemoteAgents)).Methods(http.MethodGet)
 	s.router.HandleFunc(APIPathRemoteAgents, adaptHandler(s.handlers.RemoteAgents.HandleCreateRemoteAgent)).Methods(http.MethodPost)
+	s.router.HandleFunc(APIPathRemoteAgents+"/{namespace}/{name}", adaptHandler(s.handlers.RemoteAgents.HandleGetRemoteAgent)).Methods(http.MethodGet)
+	s.router.HandleFunc(APIPathRemoteAgents+"/{namespace}/{name}", adaptHandler(s.handlers.RemoteAgents.HandleUpdateRemoteAgent)).Methods(http.MethodPut)
 	s.router.HandleFunc(APIPathRemoteAgents+"/{namespace}/{name}", adaptHandler(s.handlers.RemoteAgents.HandleDeleteRemoteAgent)).Methods(http.MethodDelete)
 
 	// A2A

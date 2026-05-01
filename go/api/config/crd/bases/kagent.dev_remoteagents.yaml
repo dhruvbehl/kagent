@@ -194,6 +194,17 @@ spec:
           status:
             description: RemoteAgentStatus defines the observed state of RemoteAgent.
             properties:
+              agentCard:
+                description: AgentCard contains the fetched agent card JSON from the
+                  remote endpoint.
+                type: string
+              agentDescription:
+                description: AgentDescription is the description extracted from the
+                  agent card.
+                type: string
+              agentName:
+                description: AgentName is the name extracted from the agent card.
+                type: string
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

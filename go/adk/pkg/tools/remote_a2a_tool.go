@@ -144,10 +144,9 @@ type remoteA2AState struct {
 	extraHeaders   map[string]string
 	propagateToken bool
 
+	mu        sync.Mutex
 	a2aClient *a2aclient.Client
 	agentCard *a2atype.AgentCard
-	initOnce  sync.Once
-	initErr   error
 
 	lastContextID string
 }
@@ -188,55 +187,59 @@ func NewKAgentRemoteA2ATool(name, description, baseURL string, timeout *time.Dur
 }
 
 // ensureClient lazily resolves the agent card and initialises the A2A client.
-// Initialization is protected by sync.Once to avoid races under concurrent use.
+// The mutex allows retries on transient errors: if init fails, a2aClient stays
+// nil and the next call will attempt init again rather than failing permanently.
 func (s *remoteA2AState) ensureClient(ctx context.Context) (*a2aclient.Client, error) {
-	s.initOnce.Do(func() {
-		resolver := agentcard.NewResolver(s.httpClient)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-		var resolveOpts []agentcard.ResolveOption
-		for k, v := range s.extraHeaders {
-			resolveOpts = append(resolveOpts, agentcard.WithRequestHeader(k, v))
-		}
+	if s.a2aClient != nil {
+		return s.a2aClient, nil
+	}
 
-		card, err := resolver.Resolve(ctx, s.baseURL, resolveOpts...)
-		if err != nil {
-			s.initErr = fmt.Errorf("failed to resolve agent card for %s: %w", s.name, err)
-			return
-		}
-		s.agentCard = card
+	resolver := agentcard.NewResolver(s.httpClient)
 
-		// Auto-populate description from agent card when not explicitly set.
-		if s.description == "" && card.Description != "" {
-			s.description = card.Description
-		}
+	var resolveOpts []agentcard.ResolveOption
+	for k, v := range s.extraHeaders {
+		resolveOpts = append(resolveOpts, agentcard.WithRequestHeader(k, v))
+	}
 
-		opts := []a2aclient.FactoryOption{
-			a2aclient.WithJSONRPCTransport(s.httpClient),
-		}
-		// Always inject x-kagent-source: agent to mark this as an agent-originated call.
-		meta := a2aclient.CallMeta{}
-		meta.Append("x-kagent-source", "agent")
-		for k, v := range s.extraHeaders {
-			meta.Append(k, v)
-		}
-		interceptors := []a2aclient.CallInterceptor{
-			a2aclient.NewStaticCallMetaInjector(meta),
-			&userIDForwardingInterceptor{},
-			&lineageHeadersInterceptor{},
-		}
-		if s.propagateToken {
-			interceptors = append(interceptors, &authzForwardingInterceptor{})
-		}
-		opts = append(opts, a2aclient.WithInterceptors(interceptors...))
+	card, err := resolver.Resolve(ctx, s.baseURL, resolveOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve agent card for %s: %w", s.name, err)
+	}
+	s.agentCard = card
 
-		client, err := a2aclient.NewFromCard(ctx, card, opts...)
-		if err != nil {
-			s.initErr = fmt.Errorf("failed to create A2A client for %s: %w", s.name, err)
-			return
-		}
-		s.a2aClient = client
-	})
-	return s.a2aClient, s.initErr
+	// Auto-populate description from agent card when not explicitly set.
+	if s.description == "" && card.Description != "" {
+		s.description = card.Description
+	}
+
+	opts := []a2aclient.FactoryOption{
+		a2aclient.WithJSONRPCTransport(s.httpClient),
+	}
+	// Always inject x-kagent-source: agent to mark this as an agent-originated call.
+	meta := a2aclient.CallMeta{}
+	meta.Append("x-kagent-source", "agent")
+	for k, v := range s.extraHeaders {
+		meta.Append(k, v)
+	}
+	interceptors := []a2aclient.CallInterceptor{
+		a2aclient.NewStaticCallMetaInjector(meta),
+		&userIDForwardingInterceptor{},
+		&lineageHeadersInterceptor{},
+	}
+	if s.propagateToken {
+		interceptors = append(interceptors, &authzForwardingInterceptor{})
+	}
+	opts = append(opts, a2aclient.WithInterceptors(interceptors...))
+
+	client, err := a2aclient.NewFromCard(ctx, card, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create A2A client for %s: %w", s.name, err)
+	}
+	s.a2aClient = client
+	return s.a2aClient, nil
 }
 
 // run dispatches to handleResume or handleFirstCall based on ToolConfirmation presence.
