@@ -39,8 +39,10 @@ export function ToolSelectionStep({
         if (tool.type === "Agent" && tool.agent) {
             return false; // Agents don't match ToolResponse objects
         } else if (tool.type === "McpServer" && tool.mcpServer) {
-            return tool.mcpServer.name === toolResponse.server_name && 
+            return tool.mcpServer.name === toolResponse.server_name &&
                    tool.mcpServer.toolNames.includes(toolResponse.id);
+        } else if (tool.type === "RemoteAgent") {
+            return false; // RemoteAgents don't match ToolResponse objects
         }
         return false;
     };

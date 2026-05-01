@@ -18,45 +18,66 @@ import (
 
 // TestE2ERemoteAgentTool exercises the new RemoteAgent CRD end-to-end:
 //
-//  1. A "target" Agent runs in-cluster (using the mock LLM for its model).
+//  1. A "target" Agent runs in-cluster backed by invoke_remoteagent_target.json.
 //     This stands in for an external A2A endpoint — we point the RemoteAgent
 //     at the target's in-cluster Service URL so the test does not need any
 //     actual cross-cluster plumbing.
-//  2. A RemoteAgent CR is created pointing at the target's A2A URL.
+//  2. A RemoteAgent CR is created pointing at the target agent's in-cluster Service.
 //     The reconciler should surface Accepted=True.
-//  3. A "consumer" Agent is created with a tool entry of type=RemoteAgent
-//     referencing the RemoteAgent. The agent should reach Ready, proving
-//     the translator path emits a valid runtime config.
-//  4. A message is sent through the consumer agent to verify the data-plane
-//     path works end-to-end (consumer A2A endpoint → runtime → response).
+//  3. A "consumer" Agent backed by invoke_remoteagent_consumer.json is created
+//     with a tool entry of type=RemoteAgent referencing the RemoteAgent. The
+//     agent should reach Ready, proving the translator path emits a valid
+//     runtime config.
+//  4. A message is sent through the consumer agent. The consumer LLM emits a
+//     tool call targeting the remote agent, the runtime calls the target via
+//     A2A, the target LLM responds with "from-target-agent", and the consumer
+//     LLM produces a final answer containing "delegated-response-confirmed".
+//     This confirms the full data-plane path is wired correctly.
 func TestE2ERemoteAgentTool(t *testing.T) {
-	baseURL, stopServer := setupMockServer(t, "mocks/invoke_remoteagent.json")
-	defer stopServer()
+	// Two separate mock servers: one for the target agent's LLM, one for the
+	// consumer agent's LLM. This lets each agent have distinct mock behaviour.
+	targetURL, stopTargetServer := setupMockServer(t, "mocks/invoke_remoteagent_target.json")
+	defer stopTargetServer()
+
+	consumerURL, stopConsumerServer := setupMockServer(t, "mocks/invoke_remoteagent_consumer.json")
+	defer stopConsumerServer()
 
 	cli := setupK8sClient(t, false)
-	modelCfg := setupModelConfig(t, cli, baseURL)
+	targetModelCfg := setupModelConfig(t, cli, targetURL)
+	consumerModelCfg := setupModelConfig(t, cli, consumerURL)
 
 	// Step 1: target agent — a normal in-cluster Declarative agent. The
 	// existing setupAgent helper waits for Ready and the A2A endpoint.
-	targetAgent := setupAgent(t, cli, modelCfg.Name, nil)
+	targetAgent := setupAgent(t, cli, targetModelCfg.Name, nil)
 
 	// Step 2: RemoteAgent pointing at the target agent's in-cluster Service.
 	// The kagent translator emits a Service at <name>.<namespace>:8080 for
 	// every Agent, which is reachable from any pod in the cluster.
+	//
+	// We use a fixed Name (not GenerateName) so that the tool name seen by the
+	// consumer LLM is deterministic: utils.ConvertToPythonIdentifier gives
+	// "kagent__NS__test_remote_agent".
 	remoteAgent := &v1alpha2.RemoteAgent{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "test-remote-agent-",
-			Namespace:    "kagent",
+			Name:      "test-remote-agent",
+			Namespace: "kagent",
 		},
 		Spec: v1alpha2.RemoteAgentSpec{
 			Description: "E2E test RemoteAgent pointing at an in-cluster target",
 			URL:         fmt.Sprintf("http://%s.%s:8080", targetAgent.Name, targetAgent.Namespace),
 		},
 	}
+	// Clean up any leftover from a previous failed run before creating.
+	_ = cli.Delete(t.Context(), remoteAgent)
 	require.NoError(t, cli.Create(t.Context(), remoteAgent))
 	cleanup(t, cli, remoteAgent)
 
 	waitForRemoteAgentAccepted(t, cli, remoteAgent, metav1.ConditionTrue)
+	// NOTE: We intentionally do not wait for Reachable=True here. The a2a-go
+	// library fetches /.well-known/agent-card.json, but kagent agents (following
+	// the A2A spec) serve /.well-known/agent.json. This path mismatch causes the
+	// Reachable condition to stay False until a2a-go is upgraded.
+	// TODO: Add waitForRemoteAgentReachable once a2a-go path is fixed.
 
 	// Step 3: consumer agent referencing the RemoteAgent as a tool. A
 	// successful Ready condition proves the translator emitted a valid
@@ -69,7 +90,7 @@ func TestE2ERemoteAgentTool(t *testing.T) {
 		},
 	}}
 
-	consumer := setupAgentWithOptions(t, cli, modelCfg.Name, tools, AgentOptions{
+	consumer := setupAgentWithOptions(t, cli, consumerModelCfg.Name, tools, AgentOptions{
 		Name: "remote-agent-consumer",
 	})
 
@@ -79,12 +100,15 @@ func TestE2ERemoteAgentTool(t *testing.T) {
 	assertAgentAccepted(t, got)
 
 	// Step 4: data-plane verification — send a message through the consumer
-	// agent and assert a non-error response is returned. This confirms that
-	// the A2A proxy, the consumer's runtime, and the RemoteAgent tool
-	// configuration are all wired up correctly end-to-end.
+	// agent and assert the final response contains "delegated-response-confirmed".
+	//
+	// This proves the full round-trip:
+	//   user "hello" → consumer LLM emits tool call (kagent__NS__test_remote_agent)
+	//   → runtime calls target agent via A2A → target LLM returns "from-target-agent"
+	//   → consumer LLM receives tool result and responds "delegated-response-confirmed"
 	t.Run("data_plane_invocation", func(t *testing.T) {
 		a2aClient := setupA2AClient(t, consumer)
-		runSyncTest(t, a2aClient, "hello", "remote-agent-consumer", nil)
+		runSyncTest(t, a2aClient, "hello", "delegated-response-confirmed", nil)
 	})
 }
 
@@ -136,6 +160,37 @@ func waitForRemoteAgentAccepted(
 	if pollErr != nil {
 		dumpRemoteAgent(t, cli, remoteAgent)
 		t.Fatalf("RemoteAgent never reached Accepted=%s: %v", want, pollErr)
+	}
+}
+
+// waitForRemoteAgentReachable polls until the RemoteAgent has a Reachable
+// condition matching the wanted status. This validates that the controller
+// successfully fetched the agent card from the remote endpoint.
+func waitForRemoteAgentReachable(
+	t *testing.T,
+	cli client.Client,
+	remoteAgent *v1alpha2.RemoteAgent,
+	want metav1.ConditionStatus,
+) {
+	t.Helper()
+	pollErr := wait.PollUntilContextTimeout(
+		t.Context(), 2*time.Second, 60*time.Second, true,
+		func(ctx context.Context) (bool, error) {
+			got := &v1alpha2.RemoteAgent{}
+			if err := cli.Get(ctx, client.ObjectKeyFromObject(remoteAgent), got); err != nil {
+				return false, err
+			}
+			for _, c := range got.Status.Conditions {
+				if c.Type == "Reachable" && c.Status == want {
+					return true, nil
+				}
+			}
+			return false, nil
+		},
+	)
+	if pollErr != nil {
+		dumpRemoteAgent(t, cli, remoteAgent)
+		t.Fatalf("RemoteAgent never reached Reachable=%s: %v", want, pollErr)
 	}
 }
 
