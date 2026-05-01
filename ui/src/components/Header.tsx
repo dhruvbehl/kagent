@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Button } from "./ui/button";
 import KAgentLogoWithText from "./kagent-logo-text";
 import KagentLogo from "./kagent-logo";
-import { Plus, Menu, X, ChevronDown, Brain, Server, Eye, Hammer, HomeIcon, ScrollText } from "lucide-react";
+import { Plus, Menu, X, ChevronDown, Brain, Server, Eye, Hammer, HomeIcon, ScrollText, Network } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { UserMenu } from "./UserMenu";
 import {
@@ -84,6 +84,12 @@ export function Header() {
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
+                  <Link href="/remoteagents/new" className="gap-2 cursor-pointer w-full">
+                    <Network className="h-4 w-4" />
+                    New Remote Agent
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
                   <Link href="/prompts/new" className="gap-2 cursor-pointer w-full">
                     <ScrollText className="h-4 w-4" />
                     New prompt library
@@ -91,7 +97,7 @@ export function Header() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            
+
             {/* View Dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -117,6 +123,12 @@ export function Header() {
                   <Link href="/mcp" className="gap-2 cursor-pointer w-full">
                     <Hammer className="h-4 w-4" />
                     MCP & tools
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/remoteagents" className="gap-2 cursor-pointer w-full">
+                    <Network className="h-4 w-4" />
+                    Remote Agents
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
@@ -183,6 +195,12 @@ export function Header() {
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild onClick={handleMobileLinkClick}>
+                    <Link href="/remoteagents" className="gap-2 cursor-pointer w-full">
+                      <Network className="h-4 w-4" />
+                      Remote Agents
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild onClick={handleMobileLinkClick}>
                     <Link href="/prompts" className="gap-2 cursor-pointer w-full">
                       <ScrollText className="h-4 w-4" />
                       Prompt Library
@@ -217,6 +235,12 @@ export function Header() {
                     <Link href="/mcp/new" className="gap-2 cursor-pointer w-full">
                       <Server className="h-4 w-4" />
                       New MCP Server
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild onClick={handleMobileLinkClick}>
+                    <Link href="/remoteagents/new" className="gap-2 cursor-pointer w-full">
+                      <Network className="h-4 w-4" />
+                      New Remote Agent
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild onClick={handleMobileLinkClick}>
