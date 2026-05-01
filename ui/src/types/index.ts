@@ -238,12 +238,25 @@ export interface ResourceMetadata {
   resourceVersion?: string;
 }
 
-export type ToolProviderType = "McpServer" | "Agent"
+export type ToolProviderType = "McpServer" | "Agent" | "RemoteAgent"
 
 export interface Tool {
   type: ToolProviderType;
   mcpServer?: McpServerTool;
   agent?: TypedLocalReference;
+  remoteAgent?: TypedLocalReference;
+}
+
+export interface RemoteAgentSpec {
+  description?: string;
+  url: string;
+}
+
+export interface RemoteAgent {
+  apiVersion?: string;
+  kind?: string;
+  metadata: ResourceMetadata;
+  spec: RemoteAgentSpec;
 }
 
 export interface TypedLocalReference {

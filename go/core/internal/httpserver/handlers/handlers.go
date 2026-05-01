@@ -34,6 +34,7 @@ type Handlers struct {
 	CrewAI              *CrewAIHandler
 	CurrentUser         *CurrentUserHandler
 	Substrate           *SubstrateHandler
+	RemoteAgents        *RemoteAgentsHandler
 }
 
 // Base holds common dependencies for all handlers
@@ -95,5 +96,6 @@ func NewHandlers(
 		CrewAI:              NewCrewAIHandler(base),
 		CurrentUser:         NewCurrentUserHandler(),
 		Substrate:           NewSubstrateHandler(base, substrateAteClient),
+		RemoteAgents:        NewRemoteAgentsHandler(base),
 	}
 }

@@ -10,6 +10,7 @@
   - toolservers
   - memories
   - remotemcpservers
+  - remoteagents
   - mcpservers
   verbs:
   - create
@@ -27,6 +28,7 @@
   - toolservers/finalizers
   - memories/finalizers
   - remotemcpservers/finalizers
+  - remoteagents/finalizers
   - mcpservers/finalizers
   verbs:
   - update

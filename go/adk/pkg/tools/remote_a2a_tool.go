@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	a2atype "github.com/a2aproject/a2a-go/a2a"
 	"github.com/a2aproject/a2a-go/a2aclient"
@@ -157,11 +158,12 @@ type remoteA2AState struct {
 //   - the initial A2A context/session ID for subagent session stamping
 //
 // The agent card is fetched lazily from baseURL/.well-known/agent.json.
-// If httpClient is nil, a default client is created. The client's transport is
-// wrapped with otelhttp to propagate W3C trace context to subagents.
-func NewKAgentRemoteA2ATool(name, description, baseURL string, httpClient *http.Client, extraHeaders map[string]string, propagateToken bool) (tool.Tool, string, error) {
-	if httpClient == nil {
-		httpClient = &http.Client{}
+// The timeout parameter, when non-nil, sets the HTTP client timeout for A2A calls.
+// The client's transport is wrapped with otelhttp to propagate W3C trace context to subagents.
+func NewKAgentRemoteA2ATool(name, description, baseURL string, timeout *time.Duration, extraHeaders map[string]string, propagateToken bool) (tool.Tool, string, error) {
+	httpClient := &http.Client{}
+	if timeout != nil {
+		httpClient.Timeout = *timeout
 	}
 	httpClient = withOTelTransport(httpClient)
 	state := &remoteA2AState{

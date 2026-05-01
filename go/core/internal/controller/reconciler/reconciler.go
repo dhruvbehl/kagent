@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"reflect"
 	"slices"
 	"strings"
@@ -73,6 +74,7 @@ type KagentReconciler interface {
 	ReconcileKagentSandboxAgent(ctx context.Context, req ctrl.Request) error
 	ReconcileKagentModelConfig(ctx context.Context, req ctrl.Request) error
 	ReconcileKagentRemoteMCPServer(ctx context.Context, req ctrl.Request) error
+	ReconcileKagentRemoteAgent(ctx context.Context, req ctrl.Request) error
 	ReconcileKagentMCPService(ctx context.Context, req ctrl.Request) error
 	ReconcileKagentMCPServer(ctx context.Context, req ctrl.Request) error
 	ReconcileKagentModelProviderConfig(ctx context.Context, req ctrl.Request) (ctrl.Result, error)
@@ -752,6 +754,100 @@ func (a *kagentReconciler) reconcileRemoteMCPServerStatus(
 	return nil
 }
 
+// ReconcileKagentRemoteAgent reconciles a RemoteAgent resource. RemoteAgent
+// represents an external A2A endpoint that an in-cluster Agent can reference
+// as a sub-agent tool. The reconciler validates the resource and surfaces an
+// Accepted condition; the URL is consumed by the agent translator at the time
+// the referencing Agent is reconciled.
+func (a *kagentReconciler) ReconcileKagentRemoteAgent(ctx context.Context, req ctrl.Request) error {
+	nns := req.NamespacedName
+	l := reconcileLog.WithValues("remoteAgent", nns.String())
+
+	remoteAgent := &v1alpha2.RemoteAgent{}
+	if err := a.kube.Get(ctx, nns, remoteAgent); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get remote agent %s: %w", nns, err)
+	}
+
+	validationErr := validateRemoteAgentSpec(remoteAgent)
+	if validationErr != nil {
+		l.Error(validationErr, "remote agent spec is invalid")
+	}
+
+	if err := a.reconcileRemoteAgentStatus(ctx, remoteAgent, validationErr); err != nil {
+		return fmt.Errorf("failed to reconcile remote agent status %s: %w", nns, err)
+	}
+
+	return nil
+}
+
+// validateRemoteAgentSpec performs lightweight validation of a RemoteAgent
+// spec at reconcile time. The CRD already enforces structural constraints
+// (e.g., url MinLength=1) via kubebuilder markers; this catches a few
+// additional issues not expressible there.
+func validateRemoteAgentSpec(remoteAgent *v1alpha2.RemoteAgent) error {
+	raw := strings.TrimSpace(remoteAgent.Spec.URL)
+	if raw == "" {
+		return fmt.Errorf("spec.url must not be empty")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("spec.url is not a valid URL: %w", err)
+	}
+	if !u.IsAbs() {
+		return fmt.Errorf("spec.url must be an absolute URL, got %q", remoteAgent.Spec.URL)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("spec.url must use http or https scheme, got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("spec.url must include a host, got %q", remoteAgent.Spec.URL)
+	}
+	return nil
+}
+
+func (a *kagentReconciler) reconcileRemoteAgentStatus(
+	ctx context.Context,
+	remoteAgent *v1alpha2.RemoteAgent,
+	err error,
+) error {
+	var (
+		status  metav1.ConditionStatus
+		message string
+		reason  string
+	)
+	if err != nil {
+		status = metav1.ConditionFalse
+		message = err.Error()
+		reason = "ReconcileFailed"
+	} else {
+		status = metav1.ConditionTrue
+		reason = "Reconciled"
+		message = "Remote agent configuration accepted"
+	}
+	conditionChanged := meta.SetStatusCondition(&remoteAgent.Status.Conditions, metav1.Condition{
+		Type:               v1alpha2.AgentConditionTypeAccepted,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: remoteAgent.Generation,
+	})
+
+	if !conditionChanged && remoteAgent.Status.ObservedGeneration == remoteAgent.Generation {
+		return nil
+	}
+
+	remoteAgent.Status.ObservedGeneration = remoteAgent.Generation
+
+	if err := a.kube.Status().Update(ctx, remoteAgent); err != nil {
+		return fmt.Errorf("failed to update remote agent status: %w", err)
+	}
+
+	return nil
+}
+
 // validateCrossNamespaceReferences validates that any cross-namespace
 // references in the agent's tools target namespaces that are watched by the
 // controller. This prevents agents from referencing tools or agents in
@@ -773,7 +869,44 @@ func (a *kagentReconciler) validateCrossNamespaceReferences(ctx context.Context,
 			if err := a.validateAgentToolReference(ctx, agent.GetNamespace(), tool.Agent); err != nil {
 				return err
 			}
+		case tool.RemoteAgent != nil:
+			if err := a.validateRemoteAgentReference(ctx, agent.GetNamespace(), tool.RemoteAgent); err != nil {
+				return err
+			}
 		}
+	}
+
+	return nil
+}
+
+// validateRemoteAgentReference validates a reference to a RemoteAgent as a
+// sub-agent tool. This includes:
+//  1. Checking that target namespaces are watched by the controller
+//  2. Checking that the target RemoteAgent allows references from the agent's namespace
+func (a *kagentReconciler) validateRemoteAgentReference(ctx context.Context, sourceNamespace string, ref *v1alpha2.TypedReference) error {
+	targetRef := ref.NamespacedName(sourceNamespace)
+
+	// Same-namespace references are always allowed.
+	if targetRef.Namespace == sourceNamespace {
+		return nil
+	}
+
+	if !a.isNamespaceWatched(targetRef.Namespace) {
+		return fmt.Errorf("cannot reference RemoteAgent %s: namespace %q is not watched by the controller",
+			targetRef, targetRef.Namespace)
+	}
+
+	target := &v1alpha2.RemoteAgent{}
+	if err := a.kube.Get(ctx, targetRef, target); err != nil {
+		return fmt.Errorf("failed to get RemoteAgent %s: %w", targetRef, err)
+	}
+
+	allowed, err := target.Spec.AllowedNamespaces.AllowsNamespace(ctx, a.kube, sourceNamespace, target.Namespace)
+	if err != nil {
+		return fmt.Errorf("failed to check cross-namespace reference for RemoteAgent %s: %w", targetRef, err)
+	}
+	if !allowed {
+		return fmt.Errorf("cross-namespace reference to RemoteAgent %s is not allowed from namespace %s", targetRef, sourceNamespace)
 	}
 
 	return nil

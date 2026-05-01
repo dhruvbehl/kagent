@@ -78,6 +78,7 @@ func (r *AgentController) SetupWithManager(mgr ctrl.Manager) error {
 	build, err = addCommonAgentWatches(build, mgr, agentWatchFinders{
 		modelConfig:     r.agentDependencyFinder("failed to list Agents in order to reconcile ModelConfig update", usesModelConfig),
 		remoteMCPServer: r.agentDependencyFinder("failed to list Agents in order to reconcile ToolServer update", usesRemoteMCPServer),
+		remoteAgent:     r.agentDependencyFinder("failed to list Agents in order to reconcile RemoteAgent update", usesRemoteAgent),
 		mcpService:      r.agentDependencyFinder("failed to list agents in order to reconcile MCPService update", usesMCPService),
 		configMap:       r.agentDependencyFinder("failed to list agents in order to reconcile ConfigMap update", referencesConfigMap),
 		mcpServer:       r.agentDependencyFinder("failed to list agents in order to reconcile MCPServer update", usesMCPServer),

@@ -16,6 +16,15 @@ func TestResolveReadPath_AllowsSymlinkedSkillsDirectory(t *testing.T) {
 		t.Fatalf("failed to write skill file: %v", err)
 	}
 
+	// EvalSymlinks to handle platforms (e.g. macOS) where os.TempDir() returns a
+	// path that contains unresolved symlinks (e.g. /var -> /private/var).
+	// resolveReadPath calls filepath.EvalSymlinks internally, so we must compare
+	// against the fully-resolved form of skillFile.
+	wantFile, err := filepath.EvalSymlinks(skillFile)
+	if err != nil {
+		t.Fatalf("filepath.EvalSymlinks(%q) error = %v", skillFile, err)
+	}
+
 	sessionID := fmt.Sprintf("%s-read", t.Name())
 	resolved, err := resolveReadPath(sessionID, skillsDir, "skills/script.py")
 	if err != nil {
