@@ -16,11 +16,11 @@ export default function RemoteAgentsPage() {
     setLoading(true);
     setLoadError(null);
     const res = await getRemoteAgents();
-    if (res.error || !res.data) {
-      setLoadError(res.error || "Failed to load remote agents");
+    if (res.error) {
+      setLoadError(res.error);
       setRemoteAgents([]);
     } else {
-      const sorted = [...res.data].sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
+      const sorted = [...(res.data ?? [])].sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
       setRemoteAgents(sorted);
     }
     setLoading(false);
