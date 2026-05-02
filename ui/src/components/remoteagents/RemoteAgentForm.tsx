@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, AlertCircle } from "lucide-react";
+import { NamespaceCombobox } from "@/components/NamespaceCombobox";
 import type { RemoteAgent } from "@/types";
 import { isResourceNameValid } from "@/lib/utils";
 
@@ -113,13 +114,11 @@ export function RemoteAgentForm({ onCreate, defaultNamespace = "kagent" }: Remot
         {/* Namespace */}
         <div className="space-y-2">
           <Label htmlFor="remote-agent-namespace">Namespace</Label>
-          <Input
+          <NamespaceCombobox
             id="remote-agent-namespace"
-            placeholder="kagent"
             value={formNamespace}
-            onChange={(e) => setFormNamespace(e.target.value)}
+            onValueChange={setFormNamespace}
           />
-          <p className="text-xs text-muted-foreground">Kubernetes namespace for this resource. Defaults to &quot;kagent&quot;.</p>
         </div>
 
         {/* URL */}
